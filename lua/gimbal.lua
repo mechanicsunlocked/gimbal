@@ -43,6 +43,7 @@ local SETTLE_TICKS = 2 -- consecutive agreeing samples before rotating (~500 ms)
 local ONE_G = 16384 -- raw counts per g (scale = 0.000598550 m/s^2/count)
 local DEAD_ZONE = math.floor(ONE_G * 2 / 5) -- 40% of 1 g to call an axis dominant
 local TABLET_ANGLE = 200 -- hinge angle treated as "already folded" at load
+local LAPTOP_ANGLE = 170 -- and the angle we treat as "unfolded again"
 local SWITCH_DEV = "gpio-keys" -- as Hyprland names the SW_TABLET_MODE device
 
 -- Focus handling while folded.
@@ -105,6 +106,19 @@ local function find_iio(attr, want)
         if read_line(dir .. "/" .. attr) == want then return dir end
     end
     return nil
+end
+
+-- Hinge angle in degrees, or nil when there is no reading worth trusting.
+--
+-- Values above 360 are the EC's "indeterminate" sentinel rather than a real
+-- angle, and it appears reliably during the fold itself, so it is reported
+-- here as "no reading" instead of "past 360, therefore folded".
+local function lid_angle()
+    local dir = find_iio("name", "cros-ec-lid-angle")
+    if not dir then return nil end
+    local angle = read_number(dir .. "/in_angl_raw")
+    if not angle or angle > 360 then return nil end
+    return angle
 end
 
 local function accel_dir()
@@ -201,8 +215,37 @@ end
 -- ---------------------------------------------------------------------------
 -- Poll
 -- ---------------------------------------------------------------------------
+-- Declared here because tick() can decide to leave tablet mode; defined below
+-- with the rest of the transitions.
+local leave_tablet
+
 local function tick()
-    if not S.tablet or S.locked then return end
+    if not S.tablet then return end
+
+    -- Re-sync against the hinge before doing anything else.
+    --
+    -- The fold switch is edge-triggered: switch:on enters tablet mode,
+    -- switch:off leaves it, and nothing else ever re-checks. Miss one off
+    -- edge and we stay in tablet mode indefinitely -- knob overlays mapped
+    -- over the desktop, follow_mouse on the tablet value, rotation live --
+    -- with no way back until the next fold happens to land an edge.
+    --
+    -- That happened. From the outside it does not look like a mode bug at
+    -- all: the knob surfaces are full-screen with only an input mask holding
+    -- the pointer out of them, so the symptom is a mouse cursor that keeps
+    -- vanishing and coming back on a desktop that is otherwise fine.
+    --
+    -- The angle already answers "are we folded" at load, so let it answer the
+    -- same question here. Only a reading at or below 360 counts, and the
+    -- threshold sits below TABLET_ANGLE so a hinge held near the boundary
+    -- cannot oscillate between modes.
+    local angle = lid_angle()
+    if angle and angle < LAPTOP_ANGLE then
+        leave_tablet()
+        return
+    end
+
+    if S.locked then return end
 
     local dir = accel_dir()
     if not dir then return end
@@ -263,7 +306,7 @@ local function enter_tablet()
     tick() -- catch up to however the device is being held right now
 end
 
-local function leave_tablet()
+function leave_tablet()
     S.tablet = false
     S.pending, S.pending_n = nil, 0
     write_mode("laptop")
@@ -285,15 +328,10 @@ local function leave_tablet()
 end
 
 -- Switch binds are edge-triggered, so on load we cannot ask the switch where
--- it currently is. The hinge angle can answer that. Values above 360 are the
--- EC's "indeterminate" sentinel and must never be read as "past 360 therefore
--- folded" -- it appears reliably during the fold itself.
+-- it currently is. The hinge angle can answer that.
 local function seed_initial_state()
-    local dir = find_iio("name", "cros-ec-lid-angle")
-    if not dir then return false end
-    local angle = read_number(dir .. "/in_angl_raw")
-    if not angle or angle > 360 then return false end
-    return angle >= TABLET_ANGLE
+    local angle = lid_angle()
+    return angle ~= nil and angle >= TABLET_ANGLE
 end
 
 -- ---------------------------------------------------------------------------
