@@ -60,8 +60,25 @@ Panel {
     readonly property bool vertical: bar ? bar.vertical : false
     readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
 
-    implicitWidth: root.vertical ? root.barSize : buttons.implicitWidth
-    implicitHeight: root.vertical ? buttons.implicitHeight : root.barSize
+    // Both buttons are tablet-mode controls, so they are only in the bar while
+    // the machine is folded. Collapsing to zero rather than merely hiding is
+    // what actually gives the space back -- the bar host sizes each slot from
+    // the widget's implicit size, so a hidden widget with a width still holds
+    // a gap open.
+    //
+    // The test is "not laptop" rather than "is tablet" on purpose: if the mode
+    // file is missing, gimbal.lua is not running and the buttons would do
+    // nothing anyway, but a control that appears when it should not is obvious
+    // and one that silently never appears is not.
+    implicitWidth: !root.folded ? 0 : (root.vertical ? root.barSize : buttons.implicitWidth)
+    implicitHeight: !root.folded ? 0 : (root.vertical ? buttons.implicitHeight : root.barSize)
+
+    // Unfolding while the settings panel is open would otherwise leave it up
+    // with nothing anchoring it.
+    onFoldedChanged: {
+        if (!root.folded && root.opened)
+            root.close();
+    }
 
     property bool keyboardShown: false
 
@@ -170,6 +187,7 @@ Panel {
     Grid {
         id: buttons
 
+        visible: root.folded
         anchors.centerIn: parent
         rows: root.vertical ? 2 : 1
         columns: root.vertical ? 1 : 2
