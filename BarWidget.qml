@@ -214,78 +214,102 @@ Panel {
                 root.toggle();
             }
 
-            // A gimbal, drawn rather than borrowed: three rings on three axes,
-            // which is the thing the plugin is named after and the thing it
-            // does. No Nerd Font glyph is a gimbal, and a tablet outline said
-            // less than this does. Drawn as arcs so it scales with the bar and
-            // takes the bar's own colour, including when the panel is open.
+            // An attitude indicator: bezel, banked horizon, ground below it,
+            // and the fixed reference dot at the centre. It is the instrument
+            // that tells you which way up you are, which is the whole job.
+            //
+            // Drawn rather than borrowed, because no Nerd Font glyph is one,
+            // and drawn in the bar's own colour so it follows the theme.
+            //
+            // The aircraft wings a real instrument has are deliberately left
+            // off. Rendered at the bar's actual 22 px they collided with the
+            // horizon and the whole face turned to mush; the horizon and the
+            // dot survive that size, so they are what is here. Checked at
+            // size, not at the size that flatters it.
             iconComponent: Component {
                 Item {
-                    id: gimbal
+                    id: adi
 
                     readonly property real r: Math.min(width, height) * 0.42
                     readonly property real cx: width / 2
                     readonly property real cy: height / 2
                     readonly property color ink: button.active && button.useActiveColor ? button.activeColor : button.foreground
 
+                    // A standing bank, so the face reads as an attitude and
+                    // not as a half-filled circle.
+                    readonly property real bank: 18 * Math.PI / 180
+                    readonly property real hx: r * Math.cos(bank)
+                    readonly property real hy: r * Math.sin(bank)
+
                     Shape {
                         anchors.fill: parent
                         preferredRendererType: Shape.CurveRenderer
 
+                        // Ground: the circle's segment below the horizon. The
+                        // chord runs through the centre, so this is exactly a
+                        // semicircle and the sweep direction is the only thing
+                        // deciding whether it is ground or sky.
                         ShapePath {
-                            strokeColor: gimbal.ink
-                            strokeWidth: Math.max(1, gimbal.r * 0.17)
+                            strokeColor: "transparent"
+                            strokeWidth: 0
+                            fillColor: Qt.rgba(adi.ink.r, adi.ink.g, adi.ink.b, 0.32)
+                            startX: adi.cx - adi.hx
+                            startY: adi.cy - adi.hy
+
+                            PathArc {
+                                x: adi.cx + adi.hx
+                                y: adi.cy + adi.hy
+                                radiusX: adi.r
+                                radiusY: adi.r
+                                direction: PathArc.Counterclockwise
+                            }
+
+                            PathLine {
+                                x: adi.cx - adi.hx
+                                y: adi.cy - adi.hy
+                            }
+                        }
+
+                        // Bezel.
+                        ShapePath {
+                            strokeColor: adi.ink
+                            strokeWidth: Math.max(1, adi.r * 0.17)
                             fillColor: "transparent"
 
                             PathAngleArc {
-                                centerX: gimbal.cx
-                                centerY: gimbal.cy
-                                radiusX: gimbal.r
-                                radiusY: gimbal.r
+                                centerX: adi.cx
+                                centerY: adi.cy
+                                radiusX: adi.r
+                                radiusY: adi.r
                                 startAngle: 0
                                 sweepAngle: 360
                             }
                         }
 
+                        // Horizon.
                         ShapePath {
-                            strokeColor: gimbal.ink
-                            strokeWidth: Math.max(1, gimbal.r * 0.15)
+                            strokeColor: adi.ink
+                            strokeWidth: Math.max(1, adi.r * 0.12)
                             fillColor: "transparent"
+                            capStyle: ShapePath.RoundCap
+                            startX: adi.cx - adi.hx
+                            startY: adi.cy - adi.hy
 
-                            PathAngleArc {
-                                centerX: gimbal.cx
-                                centerY: gimbal.cy
-                                radiusX: gimbal.r * 0.44
-                                radiusY: gimbal.r * 0.92
-                                startAngle: 0
-                                sweepAngle: 360
-                            }
-                        }
-
-                        ShapePath {
-                            strokeColor: gimbal.ink
-                            strokeWidth: Math.max(1, gimbal.r * 0.15)
-                            fillColor: "transparent"
-
-                            PathAngleArc {
-                                centerX: gimbal.cx
-                                centerY: gimbal.cy
-                                radiusX: gimbal.r * 0.92
-                                radiusY: gimbal.r * 0.44
-                                startAngle: 0
-                                sweepAngle: 360
+                            PathLine {
+                                x: adi.cx + adi.hx
+                                y: adi.cy + adi.hy
                             }
                         }
                     }
 
-                    // The load at the centre -- the part all three rings are
-                    // there to keep level.
+                    // The fixed aircraft reference -- the one mark that does
+                    // not move when the horizon does.
                     Rectangle {
                         anchors.centerIn: parent
-                        width: gimbal.r * 0.34
+                        width: adi.r * 0.26
                         height: width
                         radius: width / 2
-                        color: gimbal.ink
+                        color: adi.ink
                     }
                 }
             }
