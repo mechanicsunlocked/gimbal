@@ -51,12 +51,20 @@ note "all present"
 command -v omarchy-shell >/dev/null 2>&1 || die "omarchy-shell not found; this needs Omarchy 4."
 
 # --------------------------------------------------------------------------
-# 1. The keyboard
+# 1. The keyboard and the fold-switch reader
 # --------------------------------------------------------------------------
 say "Building and installing fw12-oskbd"
 make -C "$here/osk" --no-print-directory
 make -C "$here/osk" --no-print-directory install
 note "$HOME/.local/bin/fw12-oskbd"
+
+# Reads SW_TABLET_MODE as a level, which is what stops a missed switch event
+# from latching the wrong mode. Rotation still works without it -- the hinge
+# angle is the fallback -- so a build failure here is not fatal to the install.
+say "Building and installing fw12-foldstate"
+make -C "$here/tools" --no-print-directory
+make -C "$here/tools" --no-print-directory install
+note "$HOME/.local/bin/fw12-foldstate"
 
 # The plugin starts the keyboard by name, so it has to be findable in the
 # environment omarchy-shell inherited -- which is the session's, not this

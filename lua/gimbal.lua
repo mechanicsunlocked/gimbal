@@ -15,8 +15,11 @@
 --   * Rotation reads the *display* accelerometer directly from sysfs. A
 --     3-axis read costs 82 us on average and 291 us at worst, so at 4 Hz this
 --     is ~0.03% of compositor time.
---   * The hinge angle is used only to seed the initial state on load, since
---     switch binds are edge-triggered and cannot report the current position.
+--   * Switch binds are edge-triggered, so they cannot report the current
+--     position and a missed edge would latch the wrong mode forever. The same
+--     switch also has a *level*, read through fw12-foldstate, which seeds the
+--     state on load and re-checks it every few seconds. The hinge angle is
+--     only the fallback for a machine with no such switch.
 
 local M = {}
 
@@ -44,6 +47,7 @@ local ONE_G = 16384 -- raw counts per g (scale = 0.000598550 m/s^2/count)
 local DEAD_ZONE = math.floor(ONE_G * 2 / 5) -- 40% of 1 g to call an axis dominant
 local TABLET_ANGLE = 200 -- hinge angle treated as "already folded" at load
 local LAPTOP_ANGLE = 170 -- and the angle we treat as "unfolded again"
+local RESYNC_TICKS = 20 -- ticks between fold-state safety checks (~5 s)
 local SWITCH_DEV = "gpio-keys" -- as Hyprland names the SW_TABLET_MODE device
 
 -- Focus handling while folded.
@@ -119,6 +123,73 @@ local function lid_angle()
     local angle = read_number(dir .. "/in_angl_raw")
     if not angle or angle > 360 then return nil end
     return angle
+end
+
+-- Fold state from SW_TABLET_MODE, the switch the firmware uses to cut the
+-- built-in keyboard. It is a level rather than an edge, so it answers "are we
+-- folded" outright and a missed switch event cannot latch us in the wrong
+-- mode.
+--
+-- It has to come through a helper because reading it is an EVIOCGSW ioctl and
+-- Lua has no ioctl. The helper is asked for it *asynchronously*, and that is
+-- not fastidiousness: closing an evdev file descriptor costs ~7 ms inside the
+-- kernel's input core, measured, and this runs on the compositor's thread.
+-- Blocking there for most of a frame every few seconds is the kind of stutter
+-- this plugin exists to avoid.
+--
+-- So the helper writes its answer to a file and we read the file, which is
+-- free. The answer names the device it came from and we hand that back next
+-- time, so the helper can skip its own search.
+local function fold_file()
+    return (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/gimbal-fold"
+end
+
+-- Discard any outstanding answer. Called on every real transition, so a
+-- reading taken before the fold can never be applied after it.
+local function fold_invalidate()
+    os.remove(fold_file())
+    S.fold_asked = false
+end
+
+local function fold_request()
+    local path = fold_file()
+    os.remove(path)
+    hl.dispatch(hl.dsp.exec_cmd(string.format(
+        "fw12-foldstate %s > %s.part 2>/dev/null && mv %s.part %s",
+        S.fold_dev or "", path, path, path)))
+    S.fold_asked = true
+end
+
+-- Synchronous read, for load time only.
+--
+-- Worth the ~10 ms here and nowhere else: at load there is no previous answer
+-- to fall back on, and starting in the wrong mode means the knobs are missing
+-- (or worse, mapped over the desktop) until the first safety check comes
+-- round. Once running, everything goes through fold_request/fold_read.
+local function fold_now()
+    local p = io.popen("fw12-foldstate 2>/dev/null")
+    if not p then return nil end
+    local line = p:read("*l")
+    p:close()
+    if not line then return nil end
+    local level, dev = line:match("^([01])%s+(%S+)$")
+    if not level then return nil end
+    S.fold_dev = dev
+    return level == "1"
+end
+
+-- true folded, false unfolded, nil no answer yet or no such switch.
+local function fold_read()
+    if not S.fold_asked then return nil end
+    local f = io.open(fold_file())
+    if not f then return nil end
+    local line = f:read("*l")
+    f:close()
+    if not line then return nil end
+    local level, dev = line:match("^([01])%s+(%S+)$")
+    if not level then return nil end
+    S.fold_dev = dev
+    return level == "1"
 end
 
 local function accel_dir()
@@ -215,38 +286,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Poll
 -- ---------------------------------------------------------------------------
--- Declared here because tick() can decide to leave tablet mode; defined below
--- with the rest of the transitions.
-local leave_tablet
+-- Declared here because the safety net below can change mode; both are
+-- defined further down with the rest of the transitions.
+local enter_tablet, leave_tablet
 
-local function tick()
-    if not S.tablet then return end
-
-    -- Re-sync against the hinge before doing anything else.
-    --
-    -- The fold switch is edge-triggered: switch:on enters tablet mode,
-    -- switch:off leaves it, and nothing else ever re-checks. Miss one off
-    -- edge and we stay in tablet mode indefinitely -- knob overlays mapped
-    -- over the desktop, follow_mouse on the tablet value, rotation live --
-    -- with no way back until the next fold happens to land an edge.
-    --
-    -- That happened. From the outside it does not look like a mode bug at
-    -- all: the knob surfaces are full-screen with only an input mask holding
-    -- the pointer out of them, so the symptom is a mouse cursor that keeps
-    -- vanishing and coming back on a desktop that is otherwise fine.
-    --
-    -- The angle already answers "are we folded" at load, so let it answer the
-    -- same question here. Only a reading at or below 360 counts, and the
-    -- threshold sits below TABLET_ANGLE so a hinge held near the boundary
-    -- cannot oscillate between modes.
-    local angle = lid_angle()
-    if angle and angle < LAPTOP_ANGLE then
-        leave_tablet()
-        return
-    end
-
-    if S.locked then return end
-
+-- Rotation, from the accelerometer. Only meaningful while folded.
+local function rotate_tick()
     local dir = accel_dir()
     if not dir then return end
 
@@ -275,6 +320,56 @@ local function tick()
     end
 end
 
+-- Fold-state safety net.
+--
+-- The switch binds are edge-triggered: switch:on enters tablet mode,
+-- switch:off leaves it, and until this existed nothing ever re-checked. One
+-- missed edge latched the wrong mode indefinitely -- knob overlays mapped
+-- over the desktop, follow_mouse on the tablet value, rotation live -- with
+-- no way back until a later fold happened to land an edge. It does not even
+-- present as a mode bug: the knob surfaces are full-screen with only an input
+-- mask holding the pointer out, so what you see is a cursor that keeps
+-- vanishing and coming back on a desktop that looks fine.
+--
+-- SW_TABLET_MODE is a level, so it answers the question outright and no
+-- amount of missed events can survive one cycle of this. The hinge angle is
+-- the fallback and a poorer one: it needs a threshold, and mid-fold it
+-- reports a sentinel instead of an angle.
+local function resync()
+    S.resync_n = (S.resync_n or 0) + 1
+    if S.resync_n < RESYNC_TICKS then return false end
+    S.resync_n = 0
+
+    local folded = fold_read()
+    if folded == nil then
+        local angle = lid_angle()
+        if angle then
+            if S.tablet and angle < LAPTOP_ANGLE then
+                folded = false
+            elseif not S.tablet and angle >= TABLET_ANGLE then
+                folded = true
+            end
+        end
+    end
+
+    local changed = false
+    if folded ~= nil and folded ~= S.tablet then
+        if folded then enter_tablet() else leave_tablet() end
+        changed = true
+    end
+
+    -- Asked for after acting, not before: a transition discards any answer in
+    -- flight, so requesting first would just throw this one away.
+    fold_request()
+    return changed
+end
+
+local function tick()
+    if resync() then return end
+    if not S.tablet or S.locked then return end
+    rotate_tick()
+end
+
 -- ---------------------------------------------------------------------------
 -- Mode transitions
 -- ---------------------------------------------------------------------------
@@ -291,11 +386,12 @@ local function toggle_lock()
         text = S.locked and "Rotation locked" or "Rotation unlocked",
         timeout = 1500,
     })
-    if not S.locked then tick() end
+    if not S.locked then rotate_tick() end
 end
 
-local function enter_tablet()
+function enter_tablet()
     S.tablet = true
+    fold_invalidate()
     S.pending, S.pending_n = nil, 0
     write_mode("tablet")
     hl.config({ input = { follow_mouse = TABLET_FOLLOW_MOUSE } })
@@ -303,11 +399,12 @@ local function enter_tablet()
         hl.bind("SUPER + R", toggle_lock, { description = "Toggle auto-rotation lock" })
         S.lock_bound = true
     end
-    tick() -- catch up to however the device is being held right now
+    rotate_tick() -- catch up to however the device is being held right now
 end
 
 function leave_tablet()
     S.tablet = false
+    fold_invalidate()
     S.pending, S.pending_n = nil, 0
     write_mode("laptop")
     hl.config({ input = { follow_mouse = LAPTOP_FOLLOW_MOUSE } })
@@ -327,9 +424,12 @@ function leave_tablet()
     if S.applied ~= 0 then apply(0) end
 end
 
--- Switch binds are edge-triggered, so on load we cannot ask the switch where
--- it currently is. The hinge angle can answer that.
+-- Switch binds are edge-triggered, so on load they cannot say where the hinge
+-- currently is. The switch level can, and the angle is the fallback for a
+-- machine that has no such switch.
 local function seed_initial_state()
+    local folded = fold_now()
+    if folded ~= nil then return folded end
     local angle = lid_angle()
     return angle ~= nil and angle >= TABLET_ANGLE
 end
@@ -384,7 +484,7 @@ end
 --   hyprctl eval 'require("hypr.gimbal").set_locked(false)'
 function M.set_locked(v)
     S.locked = v and true or false
-    if not S.locked then tick() end
+    if not S.locked then rotate_tick() end
 end
 
 return M

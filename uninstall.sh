@@ -18,6 +18,7 @@ pkill -x fw12-oskbd 2>/dev/null && note "stopped" || note "not running"
 
 say "Removing the keyboard"
 rm -fv "$HOME/.local/bin/fw12-oskbd" \
+       "$HOME/.local/bin/fw12-foldstate" \
        "$HOME/.local/share/gimbal/framework-logo.svg" | sed 's/^/    /'
 rmdir "$HOME/.local/share/gimbal" 2>/dev/null || true
 
@@ -51,6 +52,7 @@ fi
 rm -f "$HOME/.local/state/omarchy/gimbal-button.json"
 rm -f "$HOME/.local/state/omarchy/gimbal-pads.json"
 rm -f "$HOME/.config/omarchy/gimbal.json"
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/gimbal-fold" "${XDG_RUNTIME_DIR:-/tmp}/gimbal-mode"
 
 omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 omarchy-restart-shell >/dev/null 2>&1 || true
