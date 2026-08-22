@@ -583,11 +583,41 @@ Item {
 
             screen: modelData.screen
             visible: root.showButton
+
+            // The surface is only as big as the knob, except while the knob is
+            // unlocked for moving.
+            //
+            // It used to be full-screen always, with mask/Region as the only
+            // thing keeping the pointer out of the other 99% of it. That is a
+            // design where the safe state depends on a property staying true
+            // every frame -- through drags, animations and reconfigures -- and
+            // any lapse hands the whole display to a transparent surface. It
+            // is not hypothetical: with two of these stacked on the overlay
+            // layer, the symptom is a mouse cursor that vanishes and comes
+            // back, on a desktop that looks perfectly fine.
+            //
+            // Small while locked, which is essentially always, so a slip costs
+            // a knob-sized patch. Full-screen only while loose, which you have
+            // to triple-tap to enter, which is visibly marked by the accent
+            // ring, and which is exactly when the knob needs the whole screen
+            // to be dragged across.
+            //
+            // Swipes do not need the big surface: the touch lands on the knob
+            // and the implicit grab follows the finger off it.
+            readonly property bool moving: pad.loose
+            readonly property int surfaceSize: Math.round(root.buttonSize * 1.8)
+
             anchors {
                 top: true
-                bottom: true
                 left: true
-                right: true
+                bottom: padSurface.moving
+                right: padSurface.moving
+            }
+            implicitWidth: padSurface.moving ? 0 : padSurface.surfaceSize
+            implicitHeight: padSurface.moving ? 0 : padSurface.surfaceSize
+            margins {
+                left: padSurface.moving ? 0 : padSurface.restX
+                top: padSurface.moving ? 0 : padSurface.restY
             }
             color: "transparent"
 
@@ -609,13 +639,24 @@ Item {
                 item: pad
             }
 
-            // The swipe strips are stacked above this surface, so any part of
-            // a pad overlapping one is dead to the touch. Keep the travel
-            // inside what the strips do not claim.
-            readonly property int insetSide: root.edgeMargin
-            readonly property int insetBottom: root.edgeMargin
-            readonly property real travelX: Math.max(0, padSurface.width - root.buttonSize - padSurface.insetSide * 2)
-            readonly property real travelY: Math.max(0, padSurface.height - root.buttonSize - root.edgeMargin - padSurface.insetBottom)
+            // Travel is measured against the screen, not against this
+            // surface, so it means the same thing in both sizes.
+            readonly property real sw: padSurface.screen ? padSurface.screen.width : 0
+            readonly property real sh: padSurface.screen ? padSurface.screen.height : 0
+            readonly property real travelX: Math.max(0, padSurface.sw - root.buttonSize - root.edgeMargin * 2)
+            readonly property real travelY: Math.max(0, padSurface.sh - root.buttonSize - root.edgeMargin * 2)
+
+            // Where the knob sits, in screen coordinates.
+            readonly property real padX: root.edgeMargin + padSurface.travelX * root.padFx(padSurface.padId)
+            readonly property real padY: root.edgeMargin + padSurface.travelY * root.padFy(padSurface.padId)
+
+            // The small surface centres the knob, except near an edge, where
+            // it is clamped on screen and the knob sits off-centre inside it
+            // instead. Growing room for the swipe ring is why it is wider than
+            // the knob at all.
+            readonly property real halo: (padSurface.surfaceSize - root.buttonSize) / 2
+            readonly property real restX: Math.max(0, Math.min(padSurface.sw - padSurface.surfaceSize, padSurface.padX - padSurface.halo))
+            readonly property real restY: Math.max(0, Math.min(padSurface.sh - padSurface.surfaceSize, padSurface.padY - padSurface.halo))
 
             Item {
                 id: pad
@@ -623,8 +664,8 @@ Item {
                 width: root.buttonSize
                 height: root.buttonSize
 
-                x: padSurface.insetSide + padSurface.travelX * root.padFx(padSurface.padId)
-                y: root.edgeMargin + padSurface.travelY * root.padFy(padSurface.padId)
+                x: padSurface.moving ? padSurface.padX : (padSurface.padX - padSurface.restX)
+                y: padSurface.moving ? padSurface.padY : (padSurface.padY - padSurface.restY)
 
                 // Unlocked by three taps, and stays unlocked until three more.
                 property bool loose: false
