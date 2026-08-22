@@ -11,6 +11,12 @@ Unfold it and everything goes away again.
 
 `fcitx5` is not touched, stopped, or reconfigured by any of this.
 
+It is also unfinished in specific ways, and
+**[known issues](KNOWN-ISSUES.md)** is the honest list — a focus wobble that is
+partly upstream, a keyboard that does not yet appear on its own when you tap a
+text field, and what has and has not been tested by hand. Worth two minutes
+before you decide whether this is for you.
+
 ---
 
 ## Install
@@ -285,8 +291,8 @@ Three parts, all small:
 * **`tools/fw12-foldstate`** — reads the fold switch as a level, so a missed
   switch event cannot leave the machine stuck in the wrong mode.
 
-`ARCHITECTURE.md` is how it works; `FINDINGS.md` is the measurements behind
-each decision.
+`ARCHITECTURE.md` is how it works, `FINDINGS.md` is the measurements behind
+each decision, and `KNOWN-ISSUES.md` is where it is still rough.
 
 ### Checking on it
 
