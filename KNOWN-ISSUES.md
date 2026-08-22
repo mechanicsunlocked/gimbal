@@ -14,7 +14,7 @@ One machine. Everything in this repo was measured on:
 | | |
 |---|---|
 | Framework Laptop 12 | eDP-1 1920×1200, scale 1.6 |
-| Omarchy | 4.0.0 — an **alpha** |
+| Omarchy | 4.0.0 "Quattro", released 14 August 2026 |
 | Hyprland | 0.56.2 |
 | Quickshell | 0.3.0 |
 | Kernel | 7.1.8-arch |
@@ -24,8 +24,14 @@ are the fold switch (`SW_TABLET_MODE` is found by capability, so it should just
 work) and the accelerometer mount matrix in `lua/gimbal.lua`, which is specific
 to how this display is fitted.
 
-Omarchy 4 being an alpha matters: the shell plugin API is the newest thing
-Gimbal depends on, and it is the most likely to move under it.
+Omarchy 4 is new rather than unstable — Quattro shipped on 14 August 2026 and
+rewrote the whole desktop shell in Quickshell. That still matters here, because
+the shell plugin API it introduced is the newest thing Gimbal depends on and
+the most likely to move under it. Not a warning about the distribution; a note
+about which part of Gimbal is standing on the freshest ground.
+
+(If you check `/usr/share/omarchy/version` and see `4.0.0.alpha`, that string
+is stale in the release itself. `pacman -Q omarchy` is the one to trust.)
 
 ---
 
