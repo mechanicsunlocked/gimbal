@@ -82,7 +82,7 @@ Four ways, and all four toggle, so the same action puts it away again:
 |---|---|
 | **Tap a knob** | while folded |
 | **Swipe up on a knob** | while folded |
-| **The bar icon** | the keyboard glyph in the top bar; it lights up while the keyboard is out |
+| **The bar icon** | the keyboard glyph in the top bar, which is there while folded; it lights up while the keyboard is out |
 | **`SUPER + B`** | works in laptop mode too |
 
 Each covers where the others are awkward. A knob is already under your thumb.
@@ -180,9 +180,11 @@ surface, not a window — and everything typed in that time goes nowhere. See
 
 ## Settings
 
-Gimbal puts an icon in the bar. Tapping it opens a settings panel built on
-Omarchy's own controls, so it takes your theme and matches the Wi-Fi panel next
-to it. A touch UI rather than a config file or a TUI, for one reason: this is a
+Gimbal puts two icons in the bar — the keyboard, and an attitude indicator that
+opens the settings. **Both appear only while the machine is folded**, since
+neither has anything to do in laptop mode, and the bar gives the space back
+when they go. Tapping the indicator opens a settings panel built on Omarchy's
+own controls, so it takes your theme and matches the Wi-Fi panel next to it. A touch UI rather than a config file or a TUI, for one reason: this is a
 tablet's settings screen, and the tablet has no keyboard out unless you ask for
 one.
 
@@ -267,7 +269,9 @@ Three parts, all small:
   into Hyprland's Lua config. No daemon.
 * **`osk/`** — `fw12-oskbd`, a GTK4 layer-shell keyboard in C.
 * **`Panel.qml`** / **`BarWidget.qml`** — the Omarchy shell plugin: the knobs,
-  the bar icon, and the settings panel.
+  the bar icons, and the settings panel.
+* **`tools/fw12-foldstate`** — reads the fold switch as a level, so a missed
+  switch event cannot leave the machine stuck in the wrong mode.
 
 `ARCHITECTURE.md` is how it works; `FINDINGS.md` is the measurements behind
 each decision.
@@ -276,6 +280,7 @@ each decision.
 
 ```bash
 cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
+fw12-foldstate                               # what the fold switch says now
 pgrep -x fw12-oskbd                          # is the keyboard up
 hyprctl layers | grep -E 'osk|gimbal'        # what is on screen
 hyprctl eval 'require("hypr.gimbal").status()'
