@@ -153,8 +153,10 @@ cat <<EOF
         sudo $here/system/install.sh
 
     It closes a firmware probe race that costs the tablet switch on roughly
-    one boot in three. Without it nothing breaks -- an affected boot simply
-    stays in laptop mode -- so it is worth doing, and safe to skip.
+    one boot in three. Gimbal does not depend on winning that race -- with no
+    switch it falls back to the hinge angle and folding still works -- so this
+    only buys sharpness: a fold noticed instantly rather than within five
+    seconds, on the firmware's own hysteresis rather than the EC's angle.
 EOF
 
 if (( ${#warnings[@]} )); then

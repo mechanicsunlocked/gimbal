@@ -23,16 +23,28 @@ omarchy plugin add https://github.com/mechanicsunlocked/gimbal.git --enable --ye
 That is the whole of it. No root, nothing outside `$HOME`, and running the same
 two lines again is also how you upgrade.
 
-### The one part that needs root
+### Optional: the boot race
+
+The Framework 12 exposes its fold switch through ACPI `INT33D3`, bound by
+`soc_button_array` — but only if the Tiger Lake pin controller is already
+registered when it probes. That ordering is a race, measured on this machine
+at roughly one loss in three boots, and when it loses there is no fold switch
+on the machine at all.
+
+**Gimbal no longer depends on winning it.** With no switch it falls back to the
+hinge angle, so folding still works. What you lose is sharpness: a fold is
+noticed within five seconds rather than instantly, and the thresholds are the
+EC's angle rather than the firmware's own hysteresis.
+
+If you would rather have the instant version:
 
 ```bash
 sudo ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/system/install.sh
 ```
 
-Closes a firmware probe race that costs the tablet switch on roughly one boot
-in three. Nothing breaks without it — an affected boot simply comes up in
-laptop mode — so it is worth doing and safe to skip. `install.sh` prints this
-line at the end rather than running it for you.
+It loads the two modules from the initramfs in order, and adds a boot unit and
+a resume hook that bind the device if it still came up unbound. `install.sh`
+prints this line at the end rather than running it for you.
 
 ### Removing it
 
