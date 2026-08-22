@@ -59,8 +59,16 @@ local SWITCH_DEV = "gpio-keys" -- as Hyprland names the SW_TABLET_MODE device
 -- that time goes nowhere. Measured on the Hyprland event socket: `activewindow`
 -- goes empty on touch-down and comes back on release.
 --
--- 2 means keyboard focus follows clicks into windows rather than the pointer,
--- which is the behaviour a tablet wants anyway. Laptop mode is left alone.
+-- 2 means keyboard focus follows clicks into windows rather than the pointer.
+--
+-- It is applied only while the on-screen keyboard is actually up, not for all
+-- of tablet mode, and that narrowing is deliberate. follow_mouse = 2 has its
+-- own open focus bug upstream -- keyboard focus can be lost after focus
+-- returns from a layer surface (hyprwm/Hyprland#9980) -- so this trades one
+-- reliable failure for one intermittent one. Holding it only for the seconds
+-- the keyboard is on screen is the difference between a window that is always
+-- open and one that is open when it has to be. It is a mitigation, not a fix;
+-- the fix is upstream.
 local TABLET_FOLLOW_MOUSE = 2
 local LAPTOP_FOLLOW_MOUSE = 1 -- Omarchy's default; change here if yours differs
 
@@ -70,6 +78,11 @@ local LAPTOP_FOLLOW_MOUSE = 1 -- Omarchy's default; change here if yours differs
 -- already does inotify, and because a plain word on disk is trivial to check
 -- by hand when something looks wrong.
 local MODE_PATH = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/gimbal-mode"
+
+-- Written by the shell plugin, which owns the keyboard: "1" while it is up.
+-- Read rather than pushed because the plugin already publishes it for the bar
+-- button, and one more reader of an existing file beats a second channel.
+local OSK_PATH = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/gimbal-osk"
 
 -- ---------------------------------------------------------------------------
 -- sysfs helpers
@@ -190,6 +203,18 @@ local function fold_read()
     if not level then return nil end
     S.fold_dev = dev
     return level == "1"
+end
+
+-- Only touched when the answer changes, so this costs one small file read per
+-- tick while folded and nothing at all in laptop mode.
+local function apply_follow_mouse()
+    local want = LAPTOP_FOLLOW_MOUSE
+    if S.tablet and read_line(OSK_PATH) == "1" then
+        want = TABLET_FOLLOW_MOUSE
+    end
+    if want == S.follow_mouse then return end
+    hl.config({ input = { follow_mouse = want } })
+    S.follow_mouse = want
 end
 
 local function accel_dir()
@@ -366,6 +391,7 @@ end
 
 local function tick()
     if resync() then return end
+    apply_follow_mouse()
     if not S.tablet or S.locked then return end
     rotate_tick()
 end
@@ -394,7 +420,7 @@ function enter_tablet()
     fold_invalidate()
     S.pending, S.pending_n = nil, 0
     write_mode("tablet")
-    hl.config({ input = { follow_mouse = TABLET_FOLLOW_MOUSE } })
+    apply_follow_mouse()
     if not S.lock_bound then
         hl.bind("SUPER + R", toggle_lock, { description = "Toggle auto-rotation lock" })
         S.lock_bound = true
@@ -407,7 +433,7 @@ function leave_tablet()
     fold_invalidate()
     S.pending, S.pending_n = nil, 0
     write_mode("laptop")
-    hl.config({ input = { follow_mouse = LAPTOP_FOLLOW_MOUSE } })
+    apply_follow_mouse()
     -- Unfolding clears the rotation lock.
     --
     -- The lock is for holding the device at an angle you do not want followed
@@ -440,6 +466,7 @@ end
 S.locked = false
 S.lock_bound = false
 S.applied = 0
+S.follow_mouse = LAPTOP_FOLLOW_MOUSE
 S.pending, S.pending_n = nil, 0
 
 -- Toggle the on-screen keyboard.
