@@ -125,6 +125,35 @@ hinge angle, which it re-reads every five seconds.
 to mean rotation was simply dead until the next boot. Run the optional root step
 in the README if you want folds noticed instantly.
 
+### The cursor "disappears" and this one is not Gimbal
+
+**What you see.** The mouse cursor is gone. The touchpad seems dead, but taps
+and gestures still work, and so do the keyboard and the touchscreen. Looks
+exactly like the Gimbal fault below, and is not related to it.
+
+**Why.** The Framework 12's PIXA3854 touchpad sometimes comes up in legacy
+**mouse mode** instead of Precision Touchpad mode -- seen after a cold boot, and
+reliably after resuming from hibernation. In that mode the pointer is driven by
+the device's legacy Mouse collection, which is malformed in firmware: its
+relative X/Y axes are declared with an *unsigned* 0..255 range, so a movement of
+-1 is delivered as +255. The pointer can then only travel down and to the right,
+and pins itself in the bottom-right corner within one stroke. The kernel logs
+nothing; good and bad boots are indistinguishable in `dmesg`.
+
+**Status.** Not Gimbal, and not fixable from Gimbal -- it is below the
+compositor entirely. Worked around outside this repo with a rebind at boot and
+after resume:
+
+```bash
+sudo sh -c 'echo 0018:093A:0239.0002 > /sys/bus/hid/drivers/hid-multitouch/unbind
+            echo 0018:093A:0239.0002 > /sys/bus/hid/drivers/hid-multitouch/bind'
+```
+
+**If it happens.** Check `hyprctl cursorpos` first. If it reads the bottom-right
+corner of your logical screen and only ever moves toward it, this is it -- run
+the rebind above. If instead the mode file says `tablet` while the machine is
+open, that is the Gimbal fault and it clears itself within five seconds.
+
 ---
 
 ## Not tested by hand yet
@@ -147,6 +176,7 @@ misbehave.
 Worth grabbing before you report — these are the things that get asked first:
 
 ```bash
+hyprctl cursorpos                            # pinned to a corner? see above
 cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
 fw12-foldstate                               # what the fold switch says now
 cat "$XDG_RUNTIME_DIR/gimbal-fold"           # what Gimbal last read from it
