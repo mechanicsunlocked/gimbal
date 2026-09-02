@@ -51,12 +51,21 @@ Item {
   // session keyboard cannot appear here by protocol. The fold state comes
   // from the same runtime file Gimbal's knobs read; only the word `tablet`
   // counts, so a missing file means laptop mode and nothing here changes.
-  // The keypad opens when the password field is tapped, and only then.
+  //
+  // The keypad opens by itself the moment the machine is folded -- locked in
+  // laptop mode, then folded, there is no other way in -- and the ⌄ key puts
+  // it away; a tap on the field brings it back. One log line per fold change
+  // and per open, in the same voice as the lock service's own, so a fold
+  // that arrived under lock leaves a trace in the journal.
   property bool folded: false
   property bool keypadOpen: false
   property string gimbalModePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/gimbal-mode"
 
-  onFoldedChanged: if (!folded) keypadOpen = false
+  onFoldedChanged: {
+    console.log("gimbal lock: folded=" + folded + " inputEnabled=" + inputEnabled)
+    keypadOpen = folded
+  }
+  onKeypadOpenChanged: console.log("gimbal lock: keypadOpen=" + keypadOpen)
 
   function keypadType(ch) {
     root.passwordTextEdited(root.passwordText + ch)
