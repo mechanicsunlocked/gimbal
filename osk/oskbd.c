@@ -17,6 +17,8 @@
 #include <gtk/gtk.h>
 #include <gtk4-layer-shell.h>
 #include <gdk/wayland/gdkwayland.h>
+#include <gio/gio.h>
+#include <gio/gunixsocketaddress.h>
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 #include "virtual-keyboard-unstable-v1-client-protocol.h"
@@ -453,6 +455,28 @@ static GtkWidget *g_win, *g_fixed;
 static GtkCssProvider *g_css;
 static int g_gutter;   /* swipe gutter reserved on each side, in logical px */
 
+/* Which monitor the keyboard belongs on: the internal panel, found by
+ * connector name, and the first monitor only when there is no eDP at all.
+ * The knobs pick their screen the same way.
+ *
+ * It matters exactly when the machine is docked. GDK's monitor 0 was the
+ * 3440x1440 external display on this machine, so the board sized itself for
+ * that -- and with no output named on the layer surface it mapped on whichever
+ * monitor held focus. A tablet keyboard belongs on the panel being held.
+ * Returns an owned reference. */
+static GdkMonitor *panel_monitor(void) {
+  GListModel *mons = gdk_display_get_monitors(gdk_display_get_default());
+  guint n = mons ? g_list_model_get_n_items(mons) : 0;
+  GdkMonitor *first = NULL;
+  for (guint i = 0; i < n; i++) {
+    GdkMonitor *m = g_list_model_get_item(mons, i);   /* owned ref */
+    const char *c = gdk_monitor_get_connector(m);
+    if (c && g_str_has_prefix(c, "eDP")) { g_clear_object(&first); return m; }
+    if (!first) first = m; else g_object_unref(m);
+  }
+  return first;
+}
+
 static void apply_geometry(void) {
   if (!g_win || !g_fixed) return;
 
@@ -484,12 +508,11 @@ static void apply_geometry(void) {
    * The width comes from the plugin (argv[4]) rather than a constant here, so
    * there is one number and not two that have to agree. */
   {
-    GListModel *mons = gdk_display_get_monitors(gdk_display_get_default());
-    GdkMonitor *m0 = mons ? g_list_model_get_item(mons, 0) : NULL;
-    if (m0) {
-      GdkRectangle geo; gdk_monitor_get_geometry(m0, &geo);
+    GdkMonitor *m = panel_monitor();
+    if (m) {
+      GdkRectangle geo; gdk_monitor_get_geometry(m, &geo);
       sw = geo.width; sh = geo.height;
-      g_object_unref(m0);   /* g_list_model_get_item() returns an owned ref */
+      g_object_unref(m);
     }
   }
   int usable = sw - 2 * g_gutter;
@@ -557,6 +580,93 @@ static void on_monitor_changed(GObject *o, GParamSpec *p, gpointer u) {
   apply_geometry();
 }
 
+/* ---------------------------------------------------------------------------
+ * Staying above the Omarchy menu
+ *
+ * The menu is a full-screen overlay-layer surface, and within one layer
+ * Hyprland stacks by map order, so a menu opened after the keyboard sits on
+ * top of it: its scrim swallows every tap, and the keyboard is unusable
+ * exactly when it is most wanted, since the menu is driven by typing. A
+ * layer-rule `order` would be the clean fix; the Lua API accepts one and this
+ * Hyprland ignores it (FINDINGS 15.2).
+ *
+ * What works is a bounce. A mapped layer surface may change layer live, and
+ * Hyprland puts a surface that changes layer at the top of its new one. So on
+ * `openlayer>>omarchy-menu` the board steps to the top layer and back to the
+ * overlay, in two commits, and comes out above the menu. No unmap, so no
+ * flash, and no reflow of the tiled windows behind it (FINDINGS 15.5).
+ *
+ * The event is Hyprland's socket2, read asynchronously off the GLib main
+ * loop: no thread, no polling, nothing runs until a line arrives.
+ *
+ * The Moonlight hold-back needs no special case here. On a workspace where it
+ * is active the plugin has already hidden the keyboard, and a surface that is
+ * not mapped has nothing to restack.
+ * ------------------------------------------------------------------------ */
+static GSocketConnection *hypr_conn;
+static GDataInputStream *hypr_events;
+
+static gboolean restack_finish(gpointer u) {
+  (void)u;
+  if (g_win) {
+    gtk_layer_set_layer(GTK_WINDOW(g_win), GTK_LAYER_SHELL_LAYER_OVERLAY);
+    gtk_widget_queue_draw(g_win);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void restack(void) {
+  if (!g_win || !gtk_widget_get_mapped(g_win)) return;
+  gtk_layer_set_layer(GTK_WINDOW(g_win), GTK_LAYER_SHELL_LAYER_TOP);
+  gtk_widget_queue_draw(g_win);   /* the layer change rides on the next commit */
+  /* The second step needs a commit of its own. A frame is ~16 ms, so this is
+   * at most two frames later, while the menu is still fading in. */
+  g_timeout_add(40, restack_finish, NULL);
+}
+
+static void on_hypr_line(GObject *src, GAsyncResult *res, gpointer u);
+static void hypr_read_next(void) {
+  g_data_input_stream_read_line_async(hypr_events, G_PRIORITY_DEFAULT, NULL,
+                                      on_hypr_line, NULL);
+}
+static void on_hypr_line(GObject *src, GAsyncResult *res, gpointer u) {
+  (void)u;
+  GError *err = NULL;
+  char *line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(src), res, NULL, &err);
+  if (!line) {
+    /* End of stream: Hyprland is going away, and so is this session. */
+    if (err) { g_warning("fw12-oskbd: hyprland event socket: %s", err->message); g_error_free(err); }
+    return;
+  }
+  if (g_str_equal(line, "openlayer>>omarchy-menu")) restack();
+  g_free(line);
+  hypr_read_next();
+}
+
+static void hypr_subscribe(void) {
+  const char *rt = g_getenv("XDG_RUNTIME_DIR");
+  const char *sig = g_getenv("HYPRLAND_INSTANCE_SIGNATURE");
+  if (!rt || !sig) {
+    g_warning("fw12-oskbd: no Hyprland instance in the environment; not restacking above the menu");
+    return;
+  }
+  char *path = g_strdup_printf("%s/hypr/%s/.socket2.sock", rt, sig);
+  GSocketAddress *addr = g_unix_socket_address_new(path);
+  GSocketClient *client = g_socket_client_new();
+  GError *err = NULL;
+  hypr_conn = g_socket_client_connect(client, G_SOCKET_CONNECTABLE(addr), NULL, &err);
+  if (!hypr_conn) {
+    g_warning("fw12-oskbd: cannot connect to %s: %s", path, err ? err->message : "unknown error");
+    g_clear_error(&err);
+  } else {
+    hypr_events = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(hypr_conn)));
+    hypr_read_next();
+  }
+  g_object_unref(client);
+  g_object_unref(addr);
+  g_free(path);
+}
+
 static void on_activate(GtkApplication *app, gpointer u) {
   char **argv = u;
   const char *layout  = argv[1] && *argv[1] ? argv[1] : (g_getenv("XKB_DEFAULT_LAYOUT") ?: "us");
@@ -581,7 +691,10 @@ static void on_activate(GtkApplication *app, gpointer u) {
 
   GtkWidget *win = gtk_application_window_new(app);
   gtk_layer_init_for_window(GTK_WINDOW(win));
-  gtk_layer_set_layer(GTK_WINDOW(win), GTK_LAYER_SHELL_LAYER_TOP);
+  /* Overlay, not top: the Omarchy menu is an overlay-layer surface, and a
+   * keyboard on the top layer is under it however it is stacked. Being on
+   * the same layer is what makes the bounce above possible at all. */
+  gtk_layer_set_layer(GTK_WINDOW(win), GTK_LAYER_SHELL_LAYER_OVERLAY);
   gtk_layer_set_keyboard_mode(GTK_WINDOW(win), GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
   gtk_layer_set_namespace(GTK_WINDOW(win), "fw12tab-osk");
   gtk_layer_set_anchor(GTK_WINDOW(win), GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
@@ -673,17 +786,18 @@ static void on_activate(GtkApplication *app, gpointer u) {
   relabel_keys();   /* set initial keycap symbols from the keymap */
   gtk_window_set_child(GTK_WINDOW(win), grid);
 
-  apply_geometry();
   {
-    GListModel *mons = gdk_display_get_monitors(gdk_display_get_default());
-    GdkMonitor *m0 = mons ? g_list_model_get_item(mons, 0) : NULL;
-    if (m0) {
+    GdkMonitor *m = panel_monitor();
+    if (m) {
+      gtk_layer_set_monitor(GTK_WINDOW(win), m);
       /* Rotating the panel changes the monitor's geometry rather than
        * replacing the monitor, so one notify is enough to catch a fold. The
        * reference is deliberately kept: the handler outlives this scope. */
-      g_signal_connect(m0, "notify::geometry", G_CALLBACK(on_monitor_changed), NULL);
+      g_signal_connect(m, "notify::geometry", G_CALLBACK(on_monitor_changed), NULL);
     }
   }
+  apply_geometry();
+  hypr_subscribe();
   gtk_window_present(GTK_WINDOW(win));
 }
 

@@ -20,7 +20,7 @@ PREFIX     ?= $(HOME)/.local
 BINDIR     ?= $(PREFIX)/bin
 DATADIR    ?= $(PREFIX)/share/gimbal
 
-PKGS        = gtk4 gtk4-layer-shell-0 xkbcommon wayland-client
+PKGS        = gtk4 gtk4-layer-shell-0 gio-unix-2.0 xkbcommon wayland-client
 CFLAGS     ?= -O2 -Wall -Wextra
 # The key table sets its trailing runtime fields by omission, on purpose, in
 # every one of its ~90 rows. -Wextra objects to each one, and those eighty

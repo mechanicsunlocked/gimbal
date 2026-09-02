@@ -537,6 +537,41 @@ Item {
         }
     }
 
+    // Knobs above the keyboard.
+    //
+    // Both now sit on the overlay layer -- the keyboard moved there to get
+    // above the menu, FINDINGS 15 -- and within one layer Hyprland stacks by
+    // map order. A keyboard mapped after the knobs would therefore cover any
+    // knob resting where the keyboard lands, which is the bottom corners,
+    // which is where the knobs start. The documented behaviour is the other
+    // way round: a knob over the keyboard is drawn above it and still takes
+    // the touch, so it can be dragged clear.
+    //
+    // A layer bounce puts that back. A surface that changes layer is
+    // re-inserted on top of its new one without unmapping (FINDINGS 15.5),
+    // so each knob steps to the top layer and straight back. Done whenever
+    // the keyboard maps, and whenever the menu closes, because the keyboard
+    // bounces itself above the menu the same way and would otherwise be left
+    // above the knobs.
+    function restackPads() {
+        var inst = padWindows.instances;
+        for (var i = 0; i < inst.length; i++)
+            inst[i].restack();
+    }
+
+    Connections {
+        target: Hyprland
+
+        function onRawEvent(event) {
+            var name = event.name;
+            if (name !== "openlayer" && name !== "closelayer")
+                return;
+            var ns = String(event.data);
+            if ((name === "openlayer" && ns === "fw12tab-osk") || (name === "closelayer" && ns === "omarchy-menu"))
+                root.restackPads();
+        }
+    }
+
     function savePads() {
         padFile.setText(JSON.stringify({
             left: {
@@ -572,6 +607,8 @@ Item {
     // control that is only ever touched.
     // -----------------------------------------------------------------------
     Variants {
+        id: padWindows
+
         model: root.padSurfaces
 
         PanelWindow {
@@ -628,15 +665,30 @@ Item {
             // control you learn the position of with your thumb, so it has to
             // be in the same place every time -- if the window shrank to the
             // space left by the keyboard, every pad would jump the moment the
-            // keyboard appeared. The pads sit on the overlay layer and the
-            // keyboard on the top layer, so a pad left over the keyboard is
-            // drawn above it and still takes the touch; it covers whatever key
-            // is under it, which is the reason they can be dragged.
+            // keyboard appeared. A pad left over the keyboard is kept above it
+            // by restackPads(), so it still takes the touch; it covers
+            // whatever key is under it, which is the reason they can be
+            // dragged.
             exclusionMode: ExclusionMode.Ignore
             exclusiveZone: 0
 
             mask: Region {
                 item: pad
+            }
+
+            // See restackPads(). Two steps because Hyprland only moves a
+            // surface whose committed layer differs from the one it holds;
+            // both changes in one commit cancel out.
+            function restack() {
+                padSurface.WlrLayershell.layer = WlrLayer.Top;
+                restackTimer.restart();
+            }
+
+            Timer {
+                id: restackTimer
+
+                interval: 40
+                onTriggered: padSurface.WlrLayershell.layer = WlrLayer.Overlay
             }
 
             // Travel is measured against the screen, not against this

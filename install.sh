@@ -112,6 +112,7 @@ else
     mkdir -p "$plugin_dir"
     install -Dm644 "$here/manifest.json" "$plugin_dir/manifest.json"
     install -Dm644 "$here/Panel.qml"     "$plugin_dir/Panel.qml"
+    install -Dm644 "$here/BarWidget.qml" "$plugin_dir/BarWidget.qml"
     note "$plugin_dir"
 fi
 
