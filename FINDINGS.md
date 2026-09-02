@@ -2221,3 +2221,68 @@ moves a surface when the committed layer differs from the one it holds —
 which is why it is two steps and not one. This is the Phase 1 mechanism, for
 the keyboard above the menu and for the knobs above the keyboard now that
 both live on the overlay layer.
+
+---
+
+## 16. Phase 2: a resident keyboard, measured (2026-09-02)
+
+The keyboard became a long-running process, started on fold and killed on
+unfold, shown and hidden by signal (`SIGUSR1` maps, `SIGUSR2` unmaps), and
+publishing `visible` or `hidden` to `$XDG_RUNTIME_DIR/gimbal-osk` from its
+own map and unmap. Numbers from this machine, docked, with the fold
+simulated through the same file `fw12-foldstate` feeds the Lua (§16.2).
+
+### 16.1 The state file's writer, and its readers
+
+`g_file_set_contents()` renames a complete file into place, so no reader can
+see a half-written word. The open question was whether a Quickshell
+`FileView` with `watchChanges: true` survives that rename, since a watcher
+on an inode does not. Measured with a scratch FileView logging every load:
+in-place write, rename-over, rename-over, in-place write — four changes,
+four loads, in order. It survives.
+
+### 16.2 Simulating a fold without a hinge
+
+The Lua reads `$XDG_RUNTIME_DIR/gimbal-fold` every ~5 s, and that file is
+exactly what `fw12-foldstate` writes on its behalf, so writing `1 event3`
+into it is the same pipeline a real fold goes through. It self-corrects —
+the Lua immediately asks `fw12-foldstate` again, which answers `0` — so the
+word is rewritten every 400 ms for as long as the simulated fold should
+hold, then `0 event3` once. Rotation is locked first
+(`require("hypr.gimbal").set_locked(true)`): `enter_tablet` takes one
+accelerometer sample regardless of the lock, but applying needs two
+agreeing ticks and the lock stops the second. The accelerometer read
+`y=+15040` (normal) throughout anyway, so nothing would have moved.
+
+### 16.3 What the brief asked for, measured
+
+Standalone, the binary run from the build directory:
+
+    start (no argv[5])   procs=1  state=hidden   mapped=0
+    SIGUSR1              state=visible  mapped=1        (within 500 ms)
+    SIGUSR2              state=hidden   mapped=0
+    20 toggles, 100 ms apart, file checked after each:   0 mismatches
+    20 toggles back-to-back, then 600 ms:   state=hidden  mapped=0  procs=1
+    SIGTERM              procs=0  state=hidden
+    start with "shown"   state=visible  mapped=1
+
+Through the plugin, with the fold simulated:
+
+    folded              mode=tablet procs=1 state=hidden  mapped=0 follow_mouse=1
+    plugin toggle       mode=tablet procs=1 state=visible mapped=1 follow_mouse=2
+    plugin toggle       mode=tablet procs=1 state=hidden  mapped=0 follow_mouse=1
+    20 toggles by signal, 350 ms apart, file AND follow_mouse checked after each:  0 mismatches
+    shown, then unfold  mode=laptop procs=0 state=hidden  mapped=0 follow_mouse=1
+    laptop, SUPER+B path (plugin toggle)   procs=1 state=visible mapped=1 follow_mouse=1
+    and again                              procs=0 state=hidden
+
+So: repeated show and hide leave exactly one process; the state file tracks
+visibility through 20 rapid toggles; `follow_mouse` is 2 exactly while
+visible and folded; and no process survives an unfold, keyboard up or not.
+The plugin's log no longer reports `fw12-oskbd exited 15` on unfold — the
+daemon now leaves on `SIGTERM` with status 0 after releasing its modifiers.
+
+Two smaller facts from the same run: the daemon dies with its parent
+(`PR_SET_PDEATHSIG`), so `omarchy-restart-shell` cannot leave a second one
+behind; and in laptop mode nothing is resident until `SUPER+B` asks, after
+which the process lives exactly as long as the keyboard is on screen.
