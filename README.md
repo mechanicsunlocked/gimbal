@@ -1,400 +1,252 @@
 # Gimbal
 
-**Tablet mode for the Framework Laptop 12, on Omarchy 4 / Hyprland.**
+**Turns a Framework Laptop 12 into a real tablet on Omarchy.**
 
-Fold the screen back and the machine becomes a tablet: the display, the
-touchscreen and the stylus rotate together, two thumb knobs appear for
-gestures, and an on-screen keyboard comes up when you tap a text field or
-open the Omarchy menu — laid out like the Laptop 12's own keyboard, because
-it is the one your hands already know.
+Fold the screen back and the display, touch and pen rotate with you, an
+on-screen keyboard appears when you tap a text field, two thumb knobs give you
+gestures, and the lock screen gets a keypad. Unfold it and it all goes away
+again. Nothing runs while the machine is a laptop.
 
-Unfold it and everything goes away again.
-
-`fcitx5` is not configured, stopped or replaced by any of this. It is what
-tells the keyboard a text field took focus, through an addon it already
-ships.
-
-It is also unfinished in specific ways, and
-**[known issues](KNOWN-ISSUES.md)** is the honest list — a focus wobble that is
-partly upstream, which text fields do not ask for the keyboard, and what has
-and has not been tested by hand. Worth two minutes before you decide whether
-this is for you.
-
----
+<!-- preview.png: the Omarchy menu with the keyboard and a knob, folded -->
 
 ## Install
+
+Two commands. No root, nothing outside your home folder.
 
 ```bash
 omarchy plugin add https://github.com/mechanicsunlocked/gimbal.git --enable --yes
 ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/install.sh
 ```
 
-That is the whole of it. No root, nothing outside `$HOME`, and running the same
-two lines again is also how you upgrade.
+The second one asks a single question — whether to set up the lock-screen
+keypad and let the keyboard type into Omarchy's menu and prompts (say yes) —
+then builds the keyboard, installs the rotation module, and restarts the
+shell. It prints one optional extra step at the end that needs root; see
+[The boot fix](#the-boot-fix-optional).
 
-### Optional: the boot race
+**To update:** run the same two commands again.
 
-The Framework 12 exposes its fold switch through ACPI `INT33D3`, bound by
-`soc_button_array` — but only if the Tiger Lake pin controller is already
-registered when it probes. That ordering is a race, measured on this machine
-at roughly one loss in three boots, and when it loses there is no fold switch
-on the machine at all.
-
-**Gimbal no longer depends on winning it.** With no switch it falls back to the
-hinge angle, so folding still works. What you lose is sharpness: a fold is
-noticed within five seconds rather than instantly, and the thresholds are the
-EC's angle rather than the firmware's own hysteresis.
-
-If you would rather have the instant version:
-
-```bash
-sudo ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/system/install.sh
-```
-
-It loads the two modules from the initramfs in order, and adds a boot unit and
-a resume hook that bind the device if it still came up unbound. `install.sh`
-prints this line at the end rather than running it for you.
-
-### Removing it
+**To remove:**
 
 ```bash
 ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/uninstall.sh
 omarchy plugin remove io.github.mechanicsunlocked.gimbal
 ```
 
-The boot fix is left in place; `uninstall.sh` prints the commands to take that
-out too, rather than doing it, because it is a generic module-ordering fix that
-is harmless on its own.
+Requirements: Omarchy 4 on a Framework Laptop 12. The packages it builds
+against (`gtk4`, `gtk4-layer-shell`, `libxkbcommon`, `wayland`, `pkgconf`,
+`gcc`) are all in Omarchy's own repositories; the installer checks and tells
+you the one `pacman` line if any is missing. Nothing from the AUR.
 
----
+## Using it
 
-## How to use it
+### Fold
 
-### The two knobs
+Fold the screen all the way back. Within a moment the picture turns to match
+how you are holding the machine, and two round knobs appear at the bottom
+corners. Fold it back into a laptop and everything returns to normal.
 
-Fold the screen back and two round knobs appear at the lower corners, marked
-with four arrowheads. They are the whole control surface.
-
-| Do this | Get this |
-|---|---|
-| **one tap** | show / hide the keyboard |
-| **press and drag up** | show / hide the keyboard |
-| **press and drag down** | the Omarchy menu |
-| **press and drag left** | next workspace |
-| **press and drag right** | previous workspace |
-| **three quick taps** | unlock the knob — then drag it anywhere |
-| **three quick taps again** | stick it back down |
-
-Both knobs do all four gestures, so there is nothing to remember about which is
-which. Each is its own switch in the settings, so you can run one thumb or two.
-
-They start at the lower corners because that is where your thumbs already are
-when you hold the machine. Positions are kept as a fraction of the screen, so
-they survive rotation, and they are remembered across reboots.
-
-A knob fills with your accent colour while the keyboard is out, so it says
-which way it is set, and swells while it is unlocked for moving.
-
-### Showing the keyboard
-
-Mostly you do not. While folded, **tapping a text field brings it up**, and it
-goes away when the field loses focus; **opening the Omarchy menu brings it
-up**, since the menu is driven by typing, and closing the menu puts it away
-unless a text field has taken over. Typing on it does not dismiss it.
-
-For everything else — keybinds, a terminal that never asks, a field that had
-focus before you folded — four ways, and all four toggle, so the same action
-puts it away again:
-
-| | |
-|---|---|
-| **Tap a knob** | while folded |
-| **Swipe up on a knob** | while folded |
-| **The bar icon** | the keyboard glyph in the top bar, which is there while folded; it lights up while the keyboard is out |
-| **`SUPER + B`** | works in laptop mode too |
-
-A keyboard you summoned yourself stays until you put it away; only one that
-came up by itself goes away by itself. Each covers where the others are
-awkward. A knob is already under your thumb. The bar icon is the one you can
-always see, and it is instant — a knob tap has to wait out the triple-tap
-window first, about a third of a second. And `SUPER + B` is the only one that
-works *from the on-screen keyboard itself* — its Framework key is a real
-Super — which is how you put the keyboard away without hunting for a control
-the keyboard may be sitting on.
-
-One rule worth knowing: a hardware keyboard turns the automatic part off.
-fcitx5 stops offering an on-screen keyboard the moment it sees a key it did
-not put there itself, which while folded means a Bluetooth keyboard — and
-then not popping the keyboard is right. The next knob tap turns it back on.
+Hold the machine flat and it keeps the last orientation rather than guessing.
+`SUPER + R` locks the rotation where it is, for reading in bed; unfolding
+unlocks it again.
 
 ### The keyboard
 
-It is the Laptop 12's own layout: function row under `Fn`, real Ctrl / Alt /
-AltGr, the Framework key as Super, and a proper arrow cluster.
+It comes up by itself when you tap a text field, and goes away when you tap
+somewhere else. It also comes up for the things Omarchy asks you to type
+into: the menu (type to filter, arrows, Enter, Esc; tap beside it to
+dismiss), a password prompt, the emoji and clipboard pickers, a reminder.
 
-Hold `Fn` for F1–F12 on the number row. Tap a modifier once for one-shot, twice
-to lock it. AltGr and dead keys work exactly as they do on the built-in
-keyboard — `AltGr` then `'` then `e` gives `é`.
+For everything else — keyboard shortcuts, a terminal, a field that already had
+focus before you folded — you can call it yourself, and the same action puts
+it away:
 
----
+| | |
+|---|---|
+| **tap a knob** | while folded |
+| **swipe up on a knob** | while folded |
+| **the keyboard icon** in the top bar | while folded; it lights up while the keyboard is out |
+| **`SUPER + B`** | in laptop mode too |
 
-## What it does
+A keyboard you called yourself stays until you put it away. One that came up
+by itself goes away by itself.
 
-### Rotates everything together
+It is laid out like the Laptop 12's own keyboard, so your hands already know
+it: function row under `fn`, real `ctrl` / `alt` / `alt gr`, the Framework
+key as Super, a proper arrow cluster. Tap a modifier once for the next key,
+twice to lock it. Accents and dead keys work exactly as on the real keyboard,
+and it follows whatever keyboard layout Hyprland is set to. Every Omarchy
+shortcut works from it: tap the Framework key, then the rest of the chord.
 
-Folding past 200° switches to tablet mode: the display transform, the
-touchscreen and the stylus all rotate as one, so a tap lands where you touched
-and the pen draws under its own tip. It runs inside Hyprland's Lua config —
-there is no daemon.
+If you type on a Bluetooth keyboard while folded, the on-screen keyboard
+stops appearing by itself until you tap a knob once. That is deliberate.
 
-### Types like the real keyboard
+### The knobs
 
-The on-screen keyboard uploads the system's own xkb keymap, so its keys arrive
-with the same keycodes as the built-in keyboard's. Keybinds match. Dead keys
-compose. Nothing needs special-casing for it.
+Two round knobs sit where your thumbs are. Both do the same things:
 
-It also reads `input:kb_layout` and `input:kb_variant` from Hyprland, so it is
-always the same layout as the physical keyboard and there is nothing to set.
-Change Hyprland and the on-screen keyboard follows.
+| Do this | Get this |
+|---|---|
+| **tap** | show / hide the keyboard |
+| **drag up** | show / hide the keyboard |
+| **drag down** | the Omarchy menu |
+| **drag left / right** | next / previous workspace |
+| **press and hold** | unlock the knob — now drag it anywhere, then press and hold to stick it down |
 
-<details>
-<summary>Picking a US variant</summary>
+A knob fills with your accent colour while the keyboard is out, and swells
+while it is unlocked for moving. Positions are remembered. Each knob can be
+switched off in the settings, so you can run one thumb or two.
 
-**US International is not a different keyboard from US.** The physical board is
-the same ANSI board with the same keys in the same places; `intl` is purely the
-software variant. It turns `'` `"` `` ` `` `~` `^` into dead keys and hangs
-more characters off AltGr:
+### The lock screen
 
-| `kb_variant` | `'` then `e` | good for |
-|---|---|---|
-| *(empty)* | `'e` | typing English and nothing else |
-| `intl` | `é` | typing accents constantly; the price is that `don't` needs a space after the apostrophe |
-| `altgr-intl` | `'e`, and `AltGr+'` then `e` gives `é` | mostly English, accents when you need them — the apostrophe stays an apostrophe |
+Locked and folded, a keypad is already on the lock screen: type your password
+on it and press `⏎`. The `⌄` key hides it; tapping the password field brings
+it back. Fingerprint unlock works as before. In laptop mode the lock screen is
+unchanged.
 
-`altgr-intl` is the one to reach for if `intl` starts fighting you over
-apostrophes.
+### Settings
 
-```
-input {
-    kb_layout = us
-    kb_variant = intl
-}
-```
-</details>
-
-### Stays out of a game
-
-Streaming a game to the tablet, every gesture is aimed at the remote machine,
-and a keyboard sliding up over the picture is never what you meant. So while
-you are **on the workspace a Moonlight window is on**, nothing summons the
-keyboard — not a tap, not a swipe, not the bar icon, not `SUPER + B` — and one
-already up is dismissed when you switch to it.
-
-The Omarchy menu is held back the same way, for a reason worth knowing: it is a
-full-screen layer surface that takes keyboard focus, and a client capturing
-input for a stream does not reliably take that capture back afterwards. One
-swipe for the menu was enough to leave a game that no longer answered the
-touchscreen at all. Ruled out first, by measurement: the menu unmaps cleanly
-and focus does return to the window, so it is the client's capture and not a
-surface left behind — which also means it is not ours to fix, only to avoid.
-
-**Only that workspace.** A stream on workspace 2 is no reason to lose the
-keyboard on workspace 1. And workspace swipes keep working from inside the
-game, because leaving is exactly what you still want.
-
-### Appears when it is wanted
-
-fcitx5 holds Hyprland's one input-method slot, so no on-screen keyboard here
-can see which text field has focus — but fcitx5 can, and its "DBus Virtual
-Keyboard" addon will tell a keyboard that registers with it. While folded
-`fw12-oskbd` is that keyboard: a resident process, started on fold and gone
-on unfold, that maps when fcitx5 says show and unmaps when it says hide.
-Laptop mode carries nothing resident. Details and measurements in
-`ARCHITECTURE.md` and `FINDINGS.md` §15–17.
-
-It sits above the Omarchy menu, so typing on it filters the menu and Enter
-picks — the menu's scrim used to swallow every tap.
-
-### Keeps typing working while folded
-
-Folding sets `input:follow_mouse = 2` and unfolding puts it back to `1`.
-Without it, keyboard focus detaches from the window you are typing into for as
-long as a finger rests on the keyboard — what is under your finger is a layer
-surface, not a window — and everything typed in that time goes nowhere. See
-`FINDINGS.md` §11. If your laptop-mode setting is not Hyprland's default of
-`1`, change `LAPTOP_FOLLOW_MOUSE` at the top of the Lua.
-
----
-
-## Settings
-
-Gimbal puts two icons in the bar — the keyboard, and an attitude indicator that
-opens the settings. **Both appear only while the machine is folded**, since
-neither has anything to do in laptop mode, and the bar gives the space back
-when they go. Tapping the indicator opens a settings panel built on Omarchy's
-own controls, so it takes your theme and matches the Wi-Fi panel next to it. A touch UI rather than a config file or a TUI, for one reason: this is a
-tablet's settings screen, and the tablet has no keyboard out unless you ask for
-one.
+Two icons appear in the top bar while folded: the keyboard, and an attitude
+indicator that opens the settings.
 
 | Setting | What it does |
 |---|---|
-| **Interaction** | Left knob and Right knob, each its own switch |
+| **Interaction** | each knob on or off |
 | **Keyboard** | whether it appears by itself for a text field or the menu |
-| **Gestures** | the command each of the four swipes runs |
-| **Gaming** | hold the keyboard and the menu back while Moonlight is up |
+| **Gestures** | the command each knob drag runs |
+| **Gaming** | hold the keyboard and the menu back while a Moonlight stream is on screen |
 
-Interaction is two coloured boxes rather than a list or a slider — one thumb or
-two, or neither, so each knob is its own switch. Green is on, red is off: at
-arm's length on a tablet that is the state you can read without looking twice.
+### Streaming a game
 
-Settings are written to `~/.config/omarchy/gimbal.json`. That is deliberately
-not this plugin's entry in `shell.json`: `shell.json` belongs to Omarchy, and a
-plugin that rewrites another program's config file will eventually lose a race
-with it. Values in our file win; anything left unset falls back to the
-`shell.json` entry.
+While you are on the workspace a Moonlight window is on, nothing brings the
+keyboard or the menu up — not a tap, not a swipe, not a text field. Workspace
+swipes still work, so you can always leave.
 
-### Setting the gestures by hand
+### The boot fix (optional)
 
-Everything the panel writes can also be set in your plugin entry in
-`~/.config/omarchy/shell.json`, the same place Omarchy keeps every other
-plugin's settings:
+The Framework 12's fold switch sometimes loses a race at boot, about one boot
+in three. Gimbal copes — it falls back to the hinge angle, so folding still
+works, just noticed within five seconds instead of instantly. If you would
+rather have instant, this one root command closes the race for good:
+
+```bash
+sudo ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/system/install.sh
+```
+
+It adds two kernel modules to the boot image and a small service that binds
+the switch if it still came up unbound. `uninstall.sh` prints how to take it
+out again rather than doing it.
+
+## If something is off
+
+**The mouse cursor is gone and the touchpad seems dead**, but taps still
+work. Not Gimbal: the Framework 12's touchpad sometimes comes up in the wrong
+mode after a cold boot or a hibernate. Check `hyprctl cursorpos` — if it reads
+the bottom-right corner and only ever moves towards it, see the rebind in
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
+**A text field does not bring the keyboard up.** Not every program tells the
+system it has a text field; a terminal rarely does. Tap a knob. The full list
+of what does and does not is in [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
+**Something else.** [KNOWN-ISSUES.md](KNOWN-ISSUES.md) is the honest list of
+rough edges, and the bottom of it says what to grab before reporting one at
+<https://github.com/mechanicsunlocked/gimbal/issues>.
+
+---
+
+## For the technically curious
+
+Everything above this line is all you need. Everything below is how it works,
+for anyone who wants to know or wants to change it.
+
+### What is in the box
+
+| Piece | What it is |
+|---|---|
+| `lua/gimbal.lua` | ~500 lines of Lua loaded into Hyprland's own config: reads the fold switch and the accelerometer, rotates display, touch and pen together, sets `follow_mouse` while the keyboard is out. No daemon. |
+| `osk/fw12-oskbd` | the keyboard: a GTK4 layer-shell program in C. Resident while folded, started on fold and killed on unfold; shown and hidden by signal; fcitx5's virtual keyboard over D-Bus, which is how it knows a text field took focus. It uploads the system's own xkb keymap and sends real key codes, which is why shortcuts, dead keys and AltGr all work. |
+| `Panel.qml`, `BarWidget.qml` | the Omarchy shell plugin: the knobs, the bar icons, the settings panel, and the policy for when the keyboard may appear by itself. |
+| `lock-clone/`, `menu-clone/` | the things that cannot live in a plugin: a keypad inside a clone of Omarchy's lock screen, and a one-word change to clones of the menu, the password prompt and the pickers, so a touch on the keyboard reaches them. `install.sh` sets them up with `omarchy plugin clone`; each has a README. |
+| `tools/fw12-foldstate` | reads the fold switch as a level, so a missed event cannot leave the machine stuck in the wrong mode. |
+| `system/` | the optional root boot fix. |
+| `upstream/` | four issue drafts for Omarchy and Hyprland, each with its measurement. |
+
+### Checking on it
+
+```bash
+cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
+cat "$XDG_RUNTIME_DIR/gimbal-osk"            # visible | hidden
+cat "$XDG_RUNTIME_DIR/gimbal-autoshow"       # on | off
+fw12-foldstate                               # what the fold switch says right now
+pgrep -x fw12-oskbd                          # the keyboard daemon (only while folded)
+hyprctl layers | grep -E 'osk|gimbal|menu'   # what is on screen, bottom to top
+busctl --user list | grep VirtualKeyboard    # who fcitx5 thinks its keyboard is
+hyprctl eval 'require("hypr.gimbal").status()'
+```
+
+### Setting things by hand
+
+The settings panel writes `~/.config/omarchy/gimbal.json`. The same keys can
+also go in this plugin's entry in `~/.config/omarchy/shell.json`; values in
+`gimbal.json` win.
 
 ```json
 {
-  "id": "io.github.mechanicsunlocked.gimbal",
-  "swipeUp": "@keyboard",
-  "swipeDown": "@menu",
-  "swipeRight": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r-1\" })'",
-  "swipeLeft": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r+1\" })'",
   "padLeft": true,
   "padRight": true,
+  "swipeUp": "@keyboard",
+  "swipeDown": "@menu",
+  "swipeLeft": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r+1\" })'",
+  "swipeRight": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r-1\" })'",
   "swipeThreshold": 30,
   "autoShow": true,
   "blockOnMoonlight": true
 }
 ```
 
-`@keyboard` and `@menu` are the two built-in actions; anything else is run as a
-shell command. Set a value to `""` to disable that swipe. The file is watched,
-so changes take effect without restarting anything.
-
-The two built-ins are named rather than spelled as commands for a reason: they
-are the two that put something on top of whatever you are looking at, and
-naming them is what lets a game refuse them. A command you write yourself
-always runs.
-
-<details>
-<summary>Why the workspace commands look like that</summary>
-
-**`hyprctl dispatch` takes a Lua expression on Omarchy 4**, not the words you
-would use on a hyprlang config — `hyprctl dispatch workspace +1` fails with a
-Lua syntax error and silently does nothing.
-
-**And the selector is `r`, not `e` or a bare number.** Measured with workspaces
-1, 2 and 5 live:
-
-| from | `+1` / `e+1` | `r+1` | `e-1` | `r-1` |
-|---|---|---|---|---|
-| workspace 5 | — | 6 | **2** | 4 |
-| workspace 1 | 2 | 2 | — | **1** |
-
-The `e` selectors walk to the next workspace that *has a window on it*, so
-swiping back from 5 landed on 2 whenever 3 and 4 were empty — which reads as a
-swipe that overshot. `r` counts in plain numbers, so one swipe moves one
-workspace whatever is or is not on them, and it stops at 1 rather than
-wrapping.
-</details>
-
-### Always-visible knobs
-
-Set `tabletOnly` to `false` at the top of `Panel.qml` to keep them in laptop
-mode too.
-
----
-
-## Under the hood
-
-Three parts, all small:
-
-* **`lua/gimbal.lua`** — tablet detection and auto-rotation, loaded straight
-  into Hyprland's Lua config. No daemon.
-* **`osk/`** — `fw12-oskbd`, a GTK4 layer-shell keyboard in C, resident
-  while folded and fcitx5's virtual keyboard over D-Bus.
-* **`Panel.qml`** / **`BarWidget.qml`** — the Omarchy shell plugin: the knobs,
-  the bar icons, and the settings panel.
-* **`tools/fw12-foldstate`** — reads the fold switch as a level, so a missed
-  switch event cannot leave the machine stuck in the wrong mode.
-
-`ARCHITECTURE.md` is how it works, `FINDINGS.md` is the measurements behind
-each decision, and `KNOWN-ISSUES.md` is where it is still rough.
-
-### Checking on it
-
-```bash
-cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
-fw12-foldstate                               # what the fold switch says now
-pgrep -x fw12-oskbd                          # is the keyboard daemon running (while folded, it should be)
-cat "$XDG_RUNTIME_DIR/gimbal-osk"            # visible | hidden
-cat "$XDG_RUNTIME_DIR/gimbal-autoshow"       # on | off: may it appear by itself right now
-hyprctl layers | grep -E 'osk|gimbal|menu'   # what is on screen, bottom to top
-busctl --user list | grep VirtualKeyboard    # who fcitx5 thinks its keyboard is
-hyprctl eval 'require("hypr.gimbal").status()'
-```
+`@keyboard` and `@menu` are the two built-in actions; anything else runs as a
+shell command; `""` disables a swipe. Note that `hyprctl dispatch` takes a Lua
+expression on Omarchy 4, and that the `r` workspace selectors move exactly one
+workspace where the `e` ones skip empty ones. Set `tabletOnly` to `false` at
+the top of `Panel.qml` to keep the knobs in laptop mode.
 
 To put the knobs back where they started, delete
 `~/.local/state/omarchy/gimbal-pads.json` and restart the shell.
 
+### The documents
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — how the pieces fit and why each decision was made.
+- [FINDINGS.md](FINDINGS.md) — the measurements behind every one of those decisions, with the commands.
+- [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — where it is still rough, and what has and has not been tested by hand.
+- [TESTING.md](TESTING.md) — the by-hand checklist.
+- [LUKS.md](LUKS.md) — why there is no keyboard at the disk-unlock prompt, and what to do instead.
+
+### Layout notes
+
+The board follows `input:kb_layout` and `input:kb_variant`. **US International
+is the same keyboard as US** with `'` `"` `` ` `` `~` `^` as dead keys and more
+characters under AltGr; `altgr-intl` keeps the apostrophe an apostrophe and
+puts the accents behind `AltGr`. The layout is read when the shell starts, so
+change it, then `omarchy-restart-shell`.
+
 ### About the install
 
-Two commands rather than one because Omarchy's installer deliberately never
-runs code from a plugin it has just cloned, which is the right call. So the
-second one is yours to read first:
+Omarchy's installer deliberately never runs code from a plugin it has just
+cloned, which is why there are two commands rather than one; the second is
+yours to read first. `install.sh` also works from a plain `git clone`. It is
+idempotent, doubles as the upgrade step, and touches nothing outside `$HOME`.
+The clones it sets up are ordinary `omarchy plugin clone` copies and go away
+with `omarchy plugin remove`.
 
-```bash
-less ~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/install.sh
-```
+### Trademarks
 
-Or from an ordinary clone, if you would rather not install it as a plugin at
-all until you have looked at it. `install.sh` works out which of the two it is
-and does not copy the plugin over itself:
-
-```bash
-git clone https://github.com/mechanicsunlocked/gimbal.git
-./gimbal/install.sh
-```
-
-It builds the keyboard, installs the rotation module, adds one `require` line
-to your Hyprland config, and restarts the shell.
-
-Gimbal is an ordinary Omarchy shell plugin — a git repo with a `manifest.json`
-at its root — so everything `omarchy plugin` knows how to do applies to it;
-`omarchy plugin --help` lists the rest.
-
-**Requirements:** `gtk4`, `gtk4-layer-shell`, `libxkbcommon`, `wayland`,
-`pkgconf`, `gcc` — all in the official Arch repos, nothing from the AUR.
-`install.sh` checks for them before it builds anything and prints the one
-`pacman` line that fixes it.
-
----
-
-## Trademarks
-
-Gimbal is an independent community project. It is not made by, endorsed by, or
-affiliated with Framework Computer Inc.
-
-"Framework" and the Framework logo are trademarks of Framework Computer Inc.
-The logo appears here in one place, descriptively: the Super key of the
-on-screen keyboard, which reproduces the legend printed on that key of the
-actual laptop.
-
-It is an optional asset, not part of the program. If it is not installed, the
-Super key falls back to a `❖` glyph and everything else works unchanged, so the
-mark can be removed entirely by deleting one file:
-
-```bash
-rm ~/.local/share/gimbal/framework-logo.svg
-```
-
----
+Gimbal is an independent community project, not made by, endorsed by, or
+affiliated with Framework Computer Inc. "Framework" and the Framework logo are
+trademarks of Framework Computer Inc. The logo appears in one place,
+descriptively: on the Super key of the on-screen keyboard, reproducing the
+legend printed on that key of the actual laptop. It is an optional asset; if
+`~/.local/share/gimbal/framework-logo.svg` is removed, the key shows `❖`
+instead and nothing else changes.
 
 MIT. See `LICENSE`.

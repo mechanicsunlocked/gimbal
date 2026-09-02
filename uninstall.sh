@@ -49,6 +49,31 @@ else
     rm -rf "$plugin_dir"
     note "removed $plugin_dir"
 fi
+# The two clones, only if they are ours: the lock clone carries our keypad
+# file, and the menu clone differs from Omarchy's file by the one word we put
+# there. A clone with other edits in it is yours, and is left alone with a
+# note. Removing an active clone switches Omarchy back to its built-in.
+say "Removing the clones (lock screen, menu, prompts and pickers)"
+me=${USER:-$(id -un)}
+lock_clone="$HOME/.config/omarchy/plugins/$me.lock"
+if [[ -d $lock_clone ]]; then
+    if [[ -f $lock_clone/LockKeypad.qml ]]; then
+        omarchy plugin remove "$me.lock" --yes >/dev/null 2>&1 && note "removed $me.lock" || note "could not remove $me.lock; run: omarchy plugin remove $me.lock"
+    else
+        note "$lock_clone is not ours; left alone"
+    fi
+fi
+for spec in menu:Menu.qml polkit:PolkitAgent.qml emojis:Emojis.qml clipboard:Clipboard.qml reminders:ReminderFlow.qml; do
+    src=${spec%%:*}; entry=${spec#*:}; clone="$HOME/.config/omarchy/plugins/$me.$src"
+    [[ -d $clone ]] || continue
+    stock="${OMARCHY_PATH:-/usr/share/omarchy}/shell/plugins/$src/$entry"
+    if [[ -f $stock ]] && diff -q <(sed 's/WlrKeyboardFocus.OnDemand/WlrKeyboardFocus.Exclusive/' "$clone/$entry") "$stock" >/dev/null 2>&1; then
+        omarchy plugin remove "$me.$src" --yes >/dev/null 2>&1 && note "removed $me.$src" || note "could not remove $me.$src; run: omarchy plugin remove $me.$src"
+    else
+        note "$clone has edits of its own; left alone"
+    fi
+done
+
 rm -f "$HOME/.local/state/omarchy/gimbal-button.json"
 rm -f "$HOME/.local/state/omarchy/gimbal-pads.json"
 rm -f "$HOME/.config/omarchy/gimbal.json"

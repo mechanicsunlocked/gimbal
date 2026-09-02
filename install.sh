@@ -4,19 +4,25 @@
 # No sudo, no install hooks, nothing outside $HOME. Idempotent: running it
 # twice is the same as running it once, and it is also how you upgrade.
 #
-# Four parts, and they are genuinely separate pieces of software:
+# Five parts, and they are genuinely separate pieces of software:
 #
 #   1. fw12-oskbd    the keyboard          -> ~/.local/bin
 #      (plus a check that fcitx5 can drive it; nothing of fcitx5's is edited)
 #   2. gimbal.lua  rotation           -> ~/.config/hypr, plus one require
 #                                             line in hyprland.lua
-#   3. the shell plugin  button + swipes   -> ~/.config/omarchy/plugins/<id>
-#   4. the boot fix                        -> root, printed at the end, skipped
+#   3. the shell plugin  knobs + bar icons -> ~/.config/omarchy/plugins/<id>
+#   4. clones of Omarchy's own plugins    -> ~/.config/omarchy/plugins/<you>.lock
+#      (the lock-screen keypad, and the       ~/.config/omarchy/plugins/<you>.{menu,polkit,
+#      one-word fix that lets a touch on        emojis,clipboard,reminders}
+#      the keyboard reach the menu, the
+#      password prompt and the pickers;
+#      asked first)
+#   5. the boot fix                        -> root, printed at the end, skipped
 #                                             here
 #
 # Run it from a git clone, or from the plugin directory after
 # `omarchy plugin add` -- it works out which it is and does not copy the
-# plugin over itself.
+# plugin over itself. `-y` answers yes to the one question it asks.
 set -euo pipefail
 
 PLUGIN_ID="io.github.mechanicsunlocked.gimbal"
@@ -29,7 +35,14 @@ note() { printf '    %s\n' "$*"; }
 warn() { warnings+=("$*"); printf '    \033[33mwarning:\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,20p' "$0" | sed 's/^# \?//'; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,22p' "$0" | sed 's/^# \?//'; exit 0; }
+assume_yes=0; [[ ${1:-} == -y || ${1:-} == --yes ]] && assume_yes=1
+
+ask() {   # ask "question" -> 0 for yes; -y answers yes, a non-terminal answers no
+    (( assume_yes )) && return 0
+    [[ -t 0 ]] || return 1
+    local a; read -r -p "    $1 [Y/n] " a; [[ -z $a || $a == [Yy]* ]]
+}
 
 # --------------------------------------------------------------------------
 # 0. Dependencies
@@ -161,7 +174,55 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 4. Make it live
+# 4. The clones
+#
+# Two things cannot live inside this plugin, and both are one small change to
+# plugins Omarchy already ships:
+#
+#   * the lock screen: under a session lock only the lock screen itself is
+#     drawn or touchable, so its keypad has to be part of the lock screen;
+#   * the typed overlays -- the menu, the polkit password prompt, the emoji
+#     and clipboard pickers, the reminder prompt: Hyprland sends every touch
+#     to a surface with *exclusive* keyboard focus, whatever is drawn above
+#     it, so a finger on the keyboard lands on them instead. They have to take
+#     focus on demand -- one word each, and typing works unchanged (FINDINGS
+#     19.3).
+#
+# Omarchy's answer for editing a built-in plugin is `omarchy plugin clone`,
+# which copies it to ~/.config/omarchy/plugins/<you>.<name> and switches to
+# the copy; removing the copy switches back. Nothing outside $HOME, and
+# reversible with `omarchy plugin remove`. Asked, because it does replace
+# things you may have edited yourself.
+# --------------------------------------------------------------------------
+say "The lock-screen keypad, and typing into the menu and the prompts"
+me=${USER:-$(id -un)}
+clone_dir="$HOME/.config/omarchy/plugins"
+# plugin:entry-file for the one-word change
+typed_overlays="menu:Menu.qml polkit:PolkitAgent.qml emojis:Emojis.qml clipboard:Clipboard.qml reminders:ReminderFlow.qml"
+note "these clone Omarchy's lock screen, menu, polkit prompt, emoji and clipboard pickers"
+note "and reminder prompt into $clone_dir/$me.<name>, each with a small change"
+if ask "Set them up?"; then
+    for spec in lock:LockView.qml $typed_overlays; do
+        src=${spec%%:*}; entry=${spec#*:}; target="$clone_dir/$me.$src"
+        if [[ ! -d $target ]]; then
+            omarchy plugin clone "omarchy.$src" >/dev/null 2>&1 \
+                || { warn "omarchy plugin clone omarchy.$src failed; skipping it"; continue; }
+        fi
+        [[ -f $target/$entry ]] || { warn "$target/$entry not found; skipping it"; continue; }
+        if [[ $src == lock ]]; then
+            install -Dm644 "$here/lock-clone/LockView.qml"   "$target/LockView.qml"
+            install -Dm644 "$here/lock-clone/LockKeypad.qml" "$target/LockKeypad.qml"
+        else
+            sed -i 's/WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive/WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand/' "$target/$entry"
+        fi
+        note "$target"
+    done
+else
+    note "skipped; run this again and answer yes, or see lock-clone/README.md and menu-clone/README.md"
+fi
+
+# --------------------------------------------------------------------------
+# 5. Make it live
 #
 # The shell restart is not optional the first time: enabling a third-party
 # panel hot does mount it, but a later rescanPlugins leaves it unmounted until
@@ -179,8 +240,8 @@ fi
 say "Done"
 cat <<EOF
 
-    The button appears when you fold the machine into a tablet.
-    SUPER + B toggles the keyboard from either mode.
+    Fold the machine into a tablet and the knobs appear; tap a text field
+    and the keyboard comes up. SUPER + B toggles it from either mode.
 
     One optional step is left, and it is the only one that needs root:
 

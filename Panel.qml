@@ -682,13 +682,16 @@ Item {
     //
     // Press and drag to fire. There is no hold delay and no flick-versus-move
     // ambiguity to arbitrate, because moving a pad is behind a separate
-    // gesture entirely: three taps unlock it, three more stick it down. That
-    // is deliberately not something a hand does by accident, and it is why
-    // the press-and-drag can start acting immediately.
+    // gesture entirely: press and hold unlocks it, press and hold again sticks
+    // it down. That is deliberately not something a hand does by accident,
+    // and it is why the press-and-drag can start acting immediately.
     //
-    // Tap counting is done here rather than left to TapHandler.tapCount, which
-    // keys off the platform's double-click interval -- a mouse setting, on a
-    // control that is only ever touched.
+    // It used to be three taps. That forced every single tap -- the one that
+    // shows the keyboard -- to wait out a 380 ms window first, in case two
+    // more were coming, and a keyboard that arrives a third of a second after
+    // the finger is a keyboard that feels slow. A hold is as deliberate as a
+    // triple tap and costs the tap nothing: it acts the moment the finger
+    // lifts.
     // -----------------------------------------------------------------------
     Variants {
         id: padWindows
@@ -803,11 +806,10 @@ Item {
                 x: padSurface.moving ? padSurface.padX : (padSurface.padX - padSurface.restX)
                 y: padSurface.moving ? padSurface.padY : (padSurface.padY - padSurface.restY)
 
-                // Unlocked by three taps, and stays unlocked until three more.
+                // Unlocked by a press-and-hold, and stays unlocked until another.
                 property bool loose: false
                 // 0..1 toward committing a swipe, same as the strips use.
                 property real progress: 0
-                property int tapRun: 0
 
                 opacity: padDrag.active ? 1.0 : 0.6
                 scale: pad.loose ? 1.18 : 1.0
@@ -889,27 +891,6 @@ Item {
                     }
                 }
 
-                // Three taps inside this window unlock or stick the pad. The
-                // window restarts on every tap, so it is three taps in a row
-                // rather than three within a fixed period.
-                // One tap shows and hides the keyboard, three unlock the pad
-                // for moving. A triple tap opens with a single tap, so the
-                // single-tap action cannot fire the moment the finger lifts --
-                // it waits out the window and then acts on what the run turned
-                // out to be. The delay is the price of putting two things on
-                // one control; 380 ms is short enough to feel like a button
-                // and long enough for three deliberate taps.
-                Timer {
-                    id: tapWindow
-
-                    interval: 380
-                    onTriggered: {
-                        if (pad.tapRun === 1 && !pad.loose)
-                            root.requestKeyboard(!root.keyboardShown);
-                        pad.tapRun = 0;
-                    }
-                }
-
                 DragHandler {
                     id: padDrag
 
@@ -962,16 +943,17 @@ Item {
                 }
 
                 // A swipe takes an exclusive grab past the drag threshold,
-                // which cancels this, so a gesture never counts as a tap.
+                // which cancels this, so a gesture never counts as a tap. A
+                // press held past the threshold is not a tap either: Qt emits
+                // longPressed instead, and nothing on release.
                 TapHandler {
+                    longPressThreshold: 0.5
+
                     onTapped: {
-                        pad.tapRun += 1;
-                        if (pad.tapRun < 3) {
-                            tapWindow.restart();
-                            return;
-                        }
-                        tapWindow.stop();
-                        pad.tapRun = 0;
+                        if (!pad.loose)
+                            root.requestKeyboard(!root.keyboardShown);
+                    }
+                    onLongPressed: {
                         pad.loose = !pad.loose;
                         if (!pad.loose)
                             root.savePads();

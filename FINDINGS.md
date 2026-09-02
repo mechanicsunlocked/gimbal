@@ -2633,3 +2633,44 @@ unfolds with the new binary:
 One side fact: fcitx5's frontend checks that the caller of a context method
 is the context's creator, so the create, the key and the destroy have to go
 over one bus connection — a separate `gdbus call` per step is refused.
+
+### 19.5 Qt text fields never ask, so the prompts are handled by surface
+
+The polkit password prompt — a Quickshell dialog, `omarchy-polkit`,
+exclusive keyboard focus, a `TextInput` — brought no keyboard up. Two
+reasons, both already measured elsewhere and now confirmed on it:
+
+- fcitx5's Qt module never calls `ShowVirtualKeyboard`: `strings` over
+  `libfcitx5platforminputcontextplugin-qt6.so` finds no such symbol, and a
+  focused Qt field produces `NotifyIMActivated` only (§17.3). So no Quickshell
+  text field — the menu, the polkit prompt, the emoji and clipboard pickers,
+  the reminder prompt — will ever ask through fcitx5.
+- With exclusive focus, a touch on the keyboard lands on the dialog (§19.1).
+
+So the daemon keeps a short list of typed overlays by layer namespace
+(`omarchy-menu`, `omarchy-polkit`, `omarchy-emojis`, `omarchy-clipboard`,
+`omarchy-reminders`) and treats each `openlayer` as a field taking focus and
+the last `closelayer` as it losing focus, and `install.sh` clones each of the
+five with the one-word change to on-demand focus, the way it does the menu.
+Measured with the polkit clone in place and the fold simulated:
+
+    pkexec true                              openlayer>>omarchy-polkit, keyboard visible above it
+    two clicks on the keyboard (a, b)        prompt still open, two dots in the field
+    Esc over a virtual keyboard              prompt gone ("Request dismissed", pkexec rc=126), keyboard hidden after
+
+The emoji, clipboard and reminder clones carry the same one word and are on
+the hands-on list; nothing about them differs from the menu and the prompt.
+
+### 19.6 Two smaller things from the same afternoon
+
+**Knob taps act at once.** A single tap used to wait out a 380 ms window in
+case two more were coming, so the keyboard arrived a third of a second after
+the finger. Unlocking a knob for dragging is a press-and-hold now (0.5 s), and
+a tap acts the moment the finger lifts.
+
+**Chord legends.** With Super, Ctrl or Alt latched the caps hold their base
+legend, since a chord names the key, not the character: `SUPER+SHIFT+1` is
+what the board sends — the modifier mask plus `KEY_1`, matched by keycode —
+and a cap reading `!` at that moment was the only thing wrong. Measured with
+pointer clicks: Shift alone typed `A` into a GTK entry and showed the shifted
+row; Ctrl latched showed `1..0` and `Ctrl+A` selected the entry's text.

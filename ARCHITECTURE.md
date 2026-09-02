@@ -179,12 +179,14 @@ is a key through fcitx5's own D-Bus frontend — a context of its own, one key
 with no symbol, the context destroyed — and then the name goes. fcitx5 ends
 every run on `classicui`, whatever had focus.
 
-**The menu is not a text field**, as far as fcitx5 can tell: opening it
-activates an input context and never asks for the keyboard, because its
-search is a key catcher rather than a `TextInput` (§17.3). It is driven by
-typing, so the daemon treats `openlayer>>omarchy-menu` as a field taking
-focus, on the same gate, and `closelayer` as it losing focus — unless a
-field takes over, whose Show cancels the pending hide.
+**Omarchy's overlays are not text fields**, as far as fcitx5 can tell: a
+Qt field activates an input context and never asks for the keyboard, because
+fcitx5's Qt module has no such call (§17.3, §19.5). The menu, the polkit
+password prompt, the emoji and clipboard pickers and the reminder prompt are
+all driven by typing, so the daemon keeps their five layer namespaces and
+treats an `openlayer` from any of them as a field taking focus, on the same
+gate, and the last `closelayer` as it losing focus — unless a field takes
+over, whose Show cancels the pending hide.
 
 ### Above the menu
 

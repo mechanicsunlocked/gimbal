@@ -269,10 +269,18 @@ static void refresh_highlight(void) {
 static struct xkb_keymap *g_keymap;
 /* Dynamic keycaps: each derived key shows the single symbol it would type RIGHT
  * NOW given the latched/locked modifiers — like a phone keyboard. Shift/AltGr
- * flip the legends live; Fn shows F1..F12 on the number row. */
+ * flip the legends live; Fn shows F1..F12 on the number row.
+ *
+ * Except inside a chord. With Super, Ctrl or Alt latched, the next key is a
+ * shortcut, and shortcuts are named by the key, not the character: Omarchy's
+ * workspace binds are SUPER+SHIFT+1, and the board sends exactly that -- the
+ * modifier mask plus KEY_1, matched by keycode -- whatever the cap says. A cap
+ * reading "!" at that moment is the only thing wrong, so the legends hold
+ * their base level while a chord modifier is down. */
 static void relabel_keys(void) {
   uint32_t m = one_shot | locks;
-  gboolean shift = m & MShift, altgr = m & MAltGr, caps = m & MCaps;
+  gboolean chord = m & (MSuper | MCtrl | MAlt);
+  gboolean shift = !chord && (m & MShift), altgr = !chord && (m & MAltGr), caps = !chord && (m & MCaps);
   for (int i = 0; i < NKEYS; i++) {
     Key *k = &keys[i];
     if (k->type != KT_CODE || k->label || !k->lbl || !g_keymap) continue;
@@ -791,7 +799,13 @@ static gboolean name_owned;
 static gboolean fcitx_initial_seen;  /* the watcher's first callback is state, not an event */
 static gboolean swallow_one;         /* the next Show is our own registration echoing back */
 static gint64   swallow_until_us;
-static gboolean menu_open;
+/* Omarchy's overlays that are driven by typing and cannot ask for a keyboard
+ * themselves: they are Qt, and fcitx5's Qt module never calls
+ * ShowVirtualKeyboard (FINDINGS 17.3, 19.5). Each opens as a layer surface
+ * with one of these namespaces, so its openlayer is the request. */
+static const char *const TYPED_OVERLAYS[] = {
+  "omarchy-menu", "omarchy-polkit", "omarchy-emojis", "omarchy-clipboard", "omarchy-reminders", NULL };
+static int overlays_open;   /* how many of them are mapped right now */
 static gboolean quitting;   /* the farewell key below provokes a Hide; it must not be answered */
 
 /* One small file, read when it matters: $XDG_RUNTIME_DIR/<name> == word. */
@@ -826,7 +840,7 @@ static gboolean hide_timer_cb(gpointer u) {
  * acting on the Hide at once is visible as flicker (FINDINGS 3.1i). Wait a
  * moment; any Show in between cancels it. Only an automatic show is undone. */
 static void auto_hide_later(void) {
-  if (shown_by != BY_AUTO || menu_open) return;
+  if (shown_by != BY_AUTO || overlays_open > 0) return;
   cancel_hide_timer();
   hide_timer = g_timeout_add(300, hide_timer_cb, NULL);
 }
@@ -960,18 +974,27 @@ static gboolean on_sigusr1(gpointer u) {
 }
 static gboolean on_sigusr2(gpointer u) { (void)u; hide_board(); return G_SOURCE_CONTINUE; }
 
-/* The menu is driven by typing, and as far as fcitx5 can tell it is not a
- * text field: opening it activates an input context but never asks for the
- * keyboard (FINDINGS 17.3). So the menu is treated as one here, on the same
- * gate: shown for it if nothing was up, put away when it closes unless a
- * text field takes over -- the Show for that cancels the pending hide. */
+/* The menu, the polkit password prompt, the emoji and clipboard pickers and
+ * the reminder prompt are driven by typing, and as far as fcitx5 can tell
+ * none of them is a text field (FINDINGS 17.3, 19.5). So their opening is
+ * treated as a field taking focus, on the same gate: shown if nothing was up,
+ * restacked above it if it was, and put away when the last of them closes
+ * unless a text field takes over -- the Show for that cancels the pending
+ * hide. */
+static const char *typed_overlay(const char *line, const char *prefix) {
+  if (!g_str_has_prefix(line, prefix)) return NULL;
+  const char *ns = line + strlen(prefix);
+  for (int i = 0; TYPED_OVERLAYS[i]; i++)
+    if (g_str_equal(ns, TYPED_OVERLAYS[i])) return TYPED_OVERLAYS[i];
+  return NULL;
+}
 static void on_hypr_event(const char *line) {
-  if (g_str_equal(line, "openlayer>>omarchy-menu")) {
-    menu_open = TRUE;
+  if (typed_overlay(line, "openlayer>>")) {
+    overlays_open++;
     if (g_win && gtk_widget_get_mapped(g_win)) { cancel_hide_timer(); restack(); }
     else if (auto_allowed()) show_board(BY_AUTO);
-  } else if (g_str_equal(line, "closelayer>>omarchy-menu")) {
-    menu_open = FALSE;
+  } else if (typed_overlay(line, "closelayer>>")) {
+    if (overlays_open > 0) overlays_open--;
     auto_hide_later();
   }
 }

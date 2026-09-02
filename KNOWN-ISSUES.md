@@ -91,7 +91,7 @@ stays until the next real hide or a knob tap.
 `"autoShow": false` in `~/.config/omarchy/gimbal.json`. The knobs, the bar
 icon and `SUPER + B` are unaffected.
 
-### Typing on the keyboard closes the Omarchy menu
+### Typing on the keyboard closes the Omarchy menu, or a password prompt ignores it
 
 **What you see.** Folded, you open the menu, the keyboard comes up, and the
 first key you touch closes the menu.
@@ -102,14 +102,18 @@ Hyprland routes every pointer and touch event to layer surfaces with
 menu is one. The finger lands on the menu's scrim, which cancels it
 (FINDINGS 19.1, with the compositor source).
 
-**Status.** Fixed on this machine with a clone of the menu that differs by
-one word, `WlrKeyboardFocus.OnDemand` (`menu-clone/`), which keeps focus on
-map and typing intact — measured with a virtual-pointer click on the `a`
-key: typed, menu stayed; a click on the scrim still closed it (FINDINGS
-19.3). It cannot be fixed from the plugin; upstream draft D asks for the
-word at the source, and the clone goes away when it lands. Without the clone,
-keys sent without a touch — a Bluetooth keyboard — reach the menu fine, and
-a finger does not.
+**Status.** Fixed by `install.sh`, which clones the menu, the polkit
+password prompt, the emoji and clipboard pickers and the reminder prompt,
+each differing from Omarchy's file by one word, `WlrKeyboardFocus.OnDemand`.
+That keeps focus on map and typing intact — measured with virtual-pointer
+clicks on the `a` key: the menu filtered and stayed, the polkit prompt took
+two characters and stayed, a click on the scrim still closed the menu, Esc
+still cancelled the prompt (FINDINGS 19.3, 19.5). None of those fields can
+ask fcitx5 for a keyboard (Qt never does), so the keyboard also comes up on
+its own when any of the five opens. It cannot be fixed from the plugin;
+upstream draft D asks for the word at the source, and the clones go away
+when it lands. Without them, keys sent without a touch — a Bluetooth
+keyboard — reach the menu fine, and a finger does not.
 
 ### fcitx5 can be left with no user interface
 

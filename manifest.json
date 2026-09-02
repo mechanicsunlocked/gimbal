@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "io.github.mechanicsunlocked.gimbal",
   "name": "Gimbal",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "author": "Sven Mathieu",
-  "description": "Tablet mode for the Framework Laptop 12 on Hyprland: auto-rotation, an on-screen keyboard laid out like the machine's own keyboard, and two draggable thumb knobs that take the gestures. Leaves fcitx5 alone.",
+  "description": "Tablet mode for the Framework Laptop 12 on Omarchy: rotation, an on-screen keyboard that appears when you tap a text field and works inside the menu, two thumb knobs for gestures, and a keypad on the lock screen. fcitx5 is left alone.",
   "kinds": [
     "panel",
     "bar-widget"

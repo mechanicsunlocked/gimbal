@@ -56,11 +56,11 @@ The knob surface is knob-sized (101x101) while locked and goes full-screen while
 unlocked for dragging, so unlocking changes the thing you are touching. That is
 the part most likely to feel wrong.
 
-- [ ] Single tap opens the keyboard.
+- [ ] Single tap opens the keyboard, at once -- there is no longer a wait.
 - [ ] Swipe up from a knob opens the keyboard.
-- [ ] **Triple-tap unlocks.** The accent ring appears.
+- [ ] **Press and hold for half a second unlocks.** The accent ring appears.
 - [ ] Drag the unlocked knob. It tracks your finger without jumping.
-- [ ] Drag it to each of the four screen edges and triple-tap to lock there.
+- [ ] Drag it to each of the four screen edges and press-and-hold to lock there.
       Check it sits sensibly at each, in both orientations.
 - [ ] While a knob is unlocked, confirm the rest of the screen still works
       where you expect it to, and that you can get out with a triple-tap.
@@ -134,6 +134,12 @@ then went away" are all useful.
 - [ ] A Qt app's text field. (Unverified: the scratch field never took focus.)
 - [ ] The Omarchy menu: open it with the keyboard hidden. Expect the keyboard;
       close it, expect it to go — unless a text field is under it.
+- [ ] A password prompt (start something that needs `pkexec`, or a VM):
+      the keyboard comes up, typing puts dots in the field, Esc cancels.
+- [ ] The emoji picker, the clipboard picker, and a reminder: typing on the
+      keyboard reaches each, and a tap beside them still dismisses them.
+- [ ] Tap the Framework key, then Shift: the number row must still read
+      `1..0`, and `Super+Shift+1` must move the window to workspace 1.
 - [ ] Type a few words on the on-screen keyboard into a field. It must stay.
       This is the risk the whole design turns on (FINDINGS 17.1, 17.7).
 - [ ] Summon it with a knob, then tap a non-text window. It must stay: you
