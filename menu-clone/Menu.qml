@@ -1021,7 +1021,7 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-menu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
     exclusionMode: ExclusionMode.Ignore
 
     // The card opens centered exactly as always. The first search keystroke
