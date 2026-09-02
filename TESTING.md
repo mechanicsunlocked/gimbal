@@ -77,6 +77,87 @@ the part most likely to feel wrong.
 - [ ] `SUPER + B` and the bar icon both open it.
 - [ ] Bar icons are absent in laptop mode and present in tablet mode.
 
+## The keyboard inside the menu (checkpoint 1)
+
+Folded, keyboard up, then the menu:
+
+- [ ] Typing on the keyboard filters the menu, and the menu stays.
+- [ ] Arrows move the cursor, Enter activates, Esc closes.
+- [ ] A tap *outside* the keyboard still dismisses the menu.
+- [ ] Setup › Plugins, a long one: note where the card's bottom edge sits
+      against the keyboard's top edge, in pixels if you can (`hyprctl
+      layers` gives the keyboard's `y`; a screenshot gives the card). That
+      number goes into `upstream/A-menu-exclusive-zones.md`.
+- [ ] A knob resting on the keyboard is drawn on top of it and can still be
+      dragged (three taps, drag, three taps).
+- [ ] The Moonlight workspace and laptop mode behave as before.
+
+What the script already checked: `hyprctl layers` lists `fw12tab-osk` above
+`omarchy-menu` while both are mapped, opening and closing the menu leaves the
+keyboard mapped, and the knob is listed above the keyboard again after the
+menu closes (FINDINGS 15.5).
+
+## The resident keyboard (checkpoint 2)
+
+- [ ] Fold. `pgrep -x fw12-oskbd` finds exactly one process, and
+      `$XDG_RUNTIME_DIR/gimbal-osk` says `hidden`.
+- [ ] Tap a knob: it is on screen at once. There should be nothing to wait
+      for — it is a surface being mapped, not a program starting. Note if it
+      ever feels late.
+- [ ] Tap the knob, the bar icon and `SUPER + B` in turn; each toggles, and
+      the bar icon lights while it is out.
+- [ ] Unfold with the keyboard up: it goes, and `pgrep` finds nothing.
+- [ ] Laptop mode: `SUPER + B` brings it up and puts it away as before, and
+      `pgrep` finds nothing afterwards.
+- [ ] `hyprctl getoption input:follow_mouse` reads `2` while it is up and
+      folded, `1` otherwise.
+
+Already checked by script: one process through 20 rapid toggles, the state
+file and `follow_mouse` tracking every one of them, nothing surviving a
+simulated unfold (FINDINGS 16.3).
+
+## Appearing by itself (checkpoint 3)
+
+Folded, keyboard hidden. Note what each does; "works", "never", or "came up
+then went away" are all useful.
+
+- [ ] foot: tap into it. Expect the keyboard. Tap the desktop or a non-text
+      window: expect it to go after a moment.
+- [ ] ghostty (`extra/ghostty`, not installed here at the time of writing):
+      expected never; two earlier measurements disagree. Write down which.
+- [ ] Chromium: the address bar, then a page's text field.
+- [ ] A GTK app's text field. (A GTK4 entry did in the script.)
+- [ ] A Qt app's text field. (Unverified: the scratch field never took focus.)
+- [ ] The Omarchy menu: open it with the keyboard hidden. Expect the keyboard;
+      close it, expect it to go — unless a text field is under it.
+- [ ] Type a few words on the on-screen keyboard into a field. It must stay.
+      This is the risk the whole design turns on (FINDINGS 17.1, 17.7).
+- [ ] Summon it with a knob, then tap a non-text window. It must stay: you
+      asked for it.
+- [ ] Turn `Keyboard` off in the settings panel. Tap a field: nothing. The
+      knob still works. Turn it back on.
+- [ ] Laptop mode never shows it by itself. Tap fields, open the menu.
+- [ ] After every unfold: `gdbus call --session --dest org.fcitx.Fcitx5
+      --object-path /controller --method org.fcitx.Fcitx.Controller1.CurrentUI`
+      says `classicui`, and `~/.XCompose` sequences still work.
+- [ ] If you have a Bluetooth keyboard: type on it while folded. The on-screen
+      keyboard goes and stays away for text fields until you tap a knob.
+
+## The lock screen (checkpoint 4)
+
+Only with the `phase4-lock` branch's clone installed (see
+`lock-clone/README.md`). The clone is the stock lock screen plus a keypad;
+until you have used it once, keep a way to unlock that does not depend on it.
+
+- [ ] Laptop mode, `SUPER + CTRL + L`: the lock screen looks exactly as
+      before. No keypad.
+- [ ] Folded, lock: tap the password field. A keypad appears. Type the
+      password on it; Enter unlocks.
+- [ ] A wrong password shows the error state, and the keypad stays.
+- [ ] Fingerprint still unlocks with the keypad up.
+- [ ] Leave it to idle-lock while folded; unlock by keypad.
+- [ ] Fold, lock, unfold: unlock with the physical keyboard.
+
 ## Gestures and the safety net
 
 - [ ] Workspace swipes, in both directions, in each orientation.

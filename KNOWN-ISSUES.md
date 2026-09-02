@@ -59,27 +59,64 @@ away and bringing it back also clears it.
 
 [9980]: https://github.com/hyprwm/Hyprland/issues/9980
 
-### The keyboard does not appear by itself
+### Where the keyboard does not appear by itself
 
-**What you see.** Tapping a text field does nothing. You have to summon the
-keyboard yourself — knob tap, knob swipe up, the bar icon, or `SUPER + B`.
+**What you see.** You tap a text field while folded and nothing comes up.
 
-**Why.** Auto-show needs the compositor to tell an input method that a text
-field took focus, which needs the *application* to implement
-`zwp_text_input_v3`. Measured on the two terminals installed here:
+**Why, and what does work.** The keyboard appears when fcitx5 says a text
+field took focus, and fcitx5 only hears about fields from clients that speak
+`zwp_text_input_v3` or its own Qt and GTK modules. Measured here (FINDINGS
+17.5): foot and a GTK4 entry ask, and get it; the Omarchy menu does not ask
+but is handled on our side, since opening it is the request. Still open:
 
-| Terminal | `text_input_v3` | Auto-show would |
-|---|---|---|
-| foot | bound | work |
-| ghostty | absent | never fire |
+| Client | State |
+|---|---|
+| ghostty | not installed on this machine. One earlier measurement saw auto-show fire (3.1f), another table had it with no `text_input_v3` at all. Until it is measured again, treat it as the ceiling: summon by hand. |
+| a Qt text field | the scratch field never took focus in the automated run; on the hands-on list |
+| Chromium | on the hands-on list |
+| a field that already had focus when you folded | fcitx5 sends the show on focus-in, and the fold came after it; tap the field again |
 
-**Status.** Not built. It is worth adding for GTK and Qt apps, browsers and
-foot — but it can never be the only way in, because in ghostty there is no text
-field as far as Wayland is concerned. Two things also have to be settled first:
-fcitx5 already occupies the seat's input-method slot, and only one client can
-hold it; and the keyboard would have to run persistently rather than being
-started and stopped, which is a change to how it works rather than an addition
-to it.
+**A hardware keyboard turns it off.** fcitx5 stops offering an on-screen
+keyboard the moment it sees a key it did not inject, which while folded means
+a Bluetooth keyboard — and then not popping the keyboard is right. The next
+knob tap turns auto-show back on (FINDINGS 17.8).
+
+**Enter in the menu can leave it up.** The keyboard ignores any hide that
+arrives within 300 ms of its own keystroke, because fcitx5 sends one for
+every key it types (FINDINGS 17.1). A menu closed by Enter loses focus inside
+that window, so if the window underneath is not a text field the keyboard
+stays until the next real hide or a knob tap.
+
+**If you want none of it.** The `Keyboard` switch in the settings panel, or
+`"autoShow": false` in `~/.config/omarchy/gimbal.json`. The knobs, the bar
+icon and `SUPER + B` are unaffected.
+
+### fcitx5 can be left with no user interface
+
+**What you see.** After the keyboard process was killed outright, fcitx5
+shows no candidate window or popups; `fcitx5-remote` still answers.
+
+**Why.** While the keyboard is registered, fcitx5 is in on-screen mode.
+Releasing the registration in that mode leaves it with no valid UI, and the
+only thing that puts the mode back is a hardware-looking key from the
+registered keyboard (FINDINGS 17.4). The daemon sends one before it leaves,
+so a clean exit — unfold, `SIGTERM`, a shell restart — ends on `classicui`
+every time. A `SIGKILL` skips it.
+
+**If it happens.** `systemctl --user restart omarchy-fcitx5.service`.
+Check with `gdbus call --session --dest org.fcitx.Fcitx5 --object-path
+/controller --method org.fcitx.Fcitx.Controller1.CurrentUI`.
+
+### The layout is read when the shell starts
+
+**What you see.** You change `input:kb_layout`, and the on-screen keyboard
+keeps the old legends until the shell restarts.
+
+**Why.** The plugin reads the layout once when it loads and passes it to the
+daemon on every start. This was already so; a resident daemon makes it
+slightly more visible, because the daemon lives for the whole fold.
+
+**Status.** Not built yet; a shell restart picks it up.
 
 ### A knob takes the whole screen while you are moving it
 
@@ -164,10 +201,16 @@ failure, but not yet by a person touching the screen:
 
 * **Triple-tap unlock and drag**, since the knob surface now changes size when
   you unlock it.
-* **A real fold cycle** since the fold detection moved onto the switch level.
+* **A real fold cycle** since the fold detection moved onto the switch level,
+  and since the keyboard became a process the fold starts and stops.
+* **Everything the keyboard now does by itself** — appearing for a text
+  field, for the menu, staying up while you type on it, going away, and
+  fcitx5 being whole afterwards. All of it was measured with the fold
+  simulated and the keys sent by a script (FINDINGS 16, 17); none of it has
+  been touched with a finger.
+* **The keyboard above the menu**, and a knob resting on the keyboard.
 
-Both are the first things to try, and the first things to report if they
-misbehave.
+`TESTING.md` has the list, in the order to do it.
 
 ---
 
@@ -180,9 +223,14 @@ hyprctl cursorpos                            # pinned to a corner? see above
 cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
 fw12-foldstate                               # what the fold switch says now
 cat "$XDG_RUNTIME_DIR/gimbal-fold"           # what Gimbal last read from it
-pgrep -x fw12-oskbd                          # is the keyboard up
-hyprctl layers | grep -E 'osk|gimbal'        # what is on screen
-hyprctl getoption input:follow_mouse
+pgrep -x fw12-oskbd                          # is the keyboard daemon running (while folded, it should be)
+cat "$XDG_RUNTIME_DIR/gimbal-osk"            # visible | hidden
+cat "$XDG_RUNTIME_DIR/gimbal-autoshow"       # on | off: may it appear by itself right now
+hyprctl layers | grep -E 'osk|gimbal|menu'   # what is on screen, bottom to top
+hyprctl getoption input:follow_mouse         # 2 while the keyboard is visible and folded
+busctl --user list | grep VirtualKeyboard    # who fcitx5 thinks its keyboard is
+gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller \
+  --method org.fcitx.Fcitx.Controller1.CurrentUI   # virtualkeyboard while folded, classicui otherwise
 hyprctl eval 'require("hypr.gimbal").status()'
 omarchy plugin validate .
 ```

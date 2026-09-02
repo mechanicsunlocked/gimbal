@@ -4,18 +4,21 @@
 
 Fold the screen back and the machine becomes a tablet: the display, the
 touchscreen and the stylus rotate together, two thumb knobs appear for
-gestures, and an on-screen keyboard is one tap away — laid out like the
-Laptop 12's own keyboard, because it is the one your hands already know.
+gestures, and an on-screen keyboard comes up when you tap a text field or
+open the Omarchy menu — laid out like the Laptop 12's own keyboard, because
+it is the one your hands already know.
 
 Unfold it and everything goes away again.
 
-`fcitx5` is not touched, stopped, or reconfigured by any of this.
+`fcitx5` is not configured, stopped or replaced by any of this. It is what
+tells the keyboard a text field took focus, through an addon it already
+ships.
 
 It is also unfinished in specific ways, and
 **[known issues](KNOWN-ISSUES.md)** is the honest list — a focus wobble that is
-partly upstream, a keyboard that does not yet appear on its own when you tap a
-text field, and what has and has not been tested by hand. Worth two minutes
-before you decide whether this is for you.
+partly upstream, which text fields do not ask for the keyboard, and what has
+and has not been tested by hand. Worth two minutes before you decide whether
+this is for you.
 
 ---
 
@@ -94,7 +97,14 @@ which way it is set, and swells while it is unlocked for moving.
 
 ### Showing the keyboard
 
-Four ways, and all four toggle, so the same action puts it away again:
+Mostly you do not. While folded, **tapping a text field brings it up**, and it
+goes away when the field loses focus; **opening the Omarchy menu brings it
+up**, since the menu is driven by typing, and closing the menu puts it away
+unless a text field has taken over. Typing on it does not dismiss it.
+
+For everything else — keybinds, a terminal that never asks, a field that had
+focus before you folded — four ways, and all four toggle, so the same action
+puts it away again:
 
 | | |
 |---|---|
@@ -103,12 +113,19 @@ Four ways, and all four toggle, so the same action puts it away again:
 | **The bar icon** | the keyboard glyph in the top bar, which is there while folded; it lights up while the keyboard is out |
 | **`SUPER + B`** | works in laptop mode too |
 
-Each covers where the others are awkward. A knob is already under your thumb.
-The bar icon is the one you can always see, and it is instant — a knob tap has
-to wait out the triple-tap window first, about a third of a second. And
-`SUPER + B` is the only one that works *from the on-screen keyboard itself* —
-its Framework key is a real Super — which is how you put the keyboard away
-without hunting for a control the keyboard may be sitting on.
+A keyboard you summoned yourself stays until you put it away; only one that
+came up by itself goes away by itself. Each covers where the others are
+awkward. A knob is already under your thumb. The bar icon is the one you can
+always see, and it is instant — a knob tap has to wait out the triple-tap
+window first, about a third of a second. And `SUPER + B` is the only one that
+works *from the on-screen keyboard itself* — its Framework key is a real
+Super — which is how you put the keyboard away without hunting for a control
+the keyboard may be sitting on.
+
+One rule worth knowing: a hardware keyboard turns the automatic part off.
+fcitx5 stops offering an on-screen keyboard the moment it sees a key it did
+not put there itself, which while folded means a Bluetooth keyboard — and
+then not popping the keyboard is right. The next knob tap turns it back on.
 
 ### The keyboard
 
@@ -185,6 +202,19 @@ surface left behind — which also means it is not ours to fix, only to avoid.
 keyboard on workspace 1. And workspace swipes keep working from inside the
 game, because leaving is exactly what you still want.
 
+### Appears when it is wanted
+
+fcitx5 holds Hyprland's one input-method slot, so no on-screen keyboard here
+can see which text field has focus — but fcitx5 can, and its "DBus Virtual
+Keyboard" addon will tell a keyboard that registers with it. While folded
+`fw12-oskbd` is that keyboard: a resident process, started on fold and gone
+on unfold, that maps when fcitx5 says show and unmaps when it says hide.
+Laptop mode carries nothing resident. Details and measurements in
+`ARCHITECTURE.md` and `FINDINGS.md` §15–17.
+
+It sits above the Omarchy menu, so typing on it filters the menu and Enter
+picks — the menu's scrim used to swallow every tap.
+
 ### Keeps typing working while folded
 
 Folding sets `input:follow_mouse = 2` and unfolding puts it back to `1`.
@@ -209,6 +239,7 @@ one.
 | Setting | What it does |
 |---|---|
 | **Interaction** | Left knob and Right knob, each its own switch |
+| **Keyboard** | whether it appears by itself for a text field or the menu |
 | **Gestures** | the command each of the four swipes runs |
 | **Gaming** | hold the keyboard and the menu back while Moonlight is up |
 
@@ -237,7 +268,9 @@ plugin's settings:
   "swipeLeft": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r+1\" })'",
   "padLeft": true,
   "padRight": true,
-  "swipeThreshold": 30
+  "swipeThreshold": 30,
+  "autoShow": true,
+  "blockOnMoonlight": true
 }
 ```
 
@@ -285,7 +318,8 @@ Three parts, all small:
 
 * **`lua/gimbal.lua`** — tablet detection and auto-rotation, loaded straight
   into Hyprland's Lua config. No daemon.
-* **`osk/`** — `fw12-oskbd`, a GTK4 layer-shell keyboard in C.
+* **`osk/`** — `fw12-oskbd`, a GTK4 layer-shell keyboard in C, resident
+  while folded and fcitx5's virtual keyboard over D-Bus.
 * **`Panel.qml`** / **`BarWidget.qml`** — the Omarchy shell plugin: the knobs,
   the bar icons, and the settings panel.
 * **`tools/fw12-foldstate`** — reads the fold switch as a level, so a missed
@@ -299,8 +333,11 @@ each decision, and `KNOWN-ISSUES.md` is where it is still rough.
 ```bash
 cat "$XDG_RUNTIME_DIR/gimbal-mode"           # tablet | laptop
 fw12-foldstate                               # what the fold switch says now
-pgrep -x fw12-oskbd                          # is the keyboard up
-hyprctl layers | grep -E 'osk|gimbal'        # what is on screen
+pgrep -x fw12-oskbd                          # is the keyboard daemon running (while folded, it should be)
+cat "$XDG_RUNTIME_DIR/gimbal-osk"            # visible | hidden
+cat "$XDG_RUNTIME_DIR/gimbal-autoshow"       # on | off: may it appear by itself right now
+hyprctl layers | grep -E 'osk|gimbal|menu'   # what is on screen, bottom to top
+busctl --user list | grep VirtualKeyboard    # who fcitx5 thinks its keyboard is
 hyprctl eval 'require("hypr.gimbal").status()'
 ```
 
