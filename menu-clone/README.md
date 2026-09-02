@@ -1,5 +1,9 @@
 # The overlay clones: one line each
 
+(No `manifest.json` here: `omarchy plugin clone` writes it, and a second one
+in the repo would make it look like two plugins to Omarchy's tooling and the
+marketplace.)
+
 `install.sh` clones five of Omarchy's overlays — the menu, the polkit
 password prompt, the emoji picker, the clipboard picker and the reminder
 prompt — and changes one line in each. This directory keeps the menu's file

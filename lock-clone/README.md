@@ -30,7 +30,7 @@ extension point, with these files as the proof of shape.
 
 | file | state |
 |---|---|
-| `manifest.json` | as `omarchy plugin clone` wrote it: id `msa.lock`, `clonedFrom: omarchy.lock` |
+| (no `manifest.json`) | `omarchy plugin clone` writes it on your machine, with your username in the id and `clonedFrom: omarchy.lock`; a copy here would make the repo look like two plugins |
 | `Service.qml` | untouched |
 | `LockView.qml` | stock, plus the fold-state reader, the tap on the field, and the keypad |
 | `LockView.patch` | the same change as a patch against the stock file; `install.sh` applies it to Omarchy's current file and refuses, with a warning, if that has changed |

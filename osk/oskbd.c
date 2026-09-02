@@ -438,14 +438,65 @@ static void on_cancel(GtkGesture *g, GdkEventSequence *seq, gpointer u) {
  * and a canyon in portrait. Margin is half the gap, because two adjacent keys
  * each contribute one. */
 static const char *CSS_FMT =
-  "window { background: rgba(20,20,20,0.92); }"
-  ".key { border-radius: %dpx; background: #2b2b2b; color: #eee;"
+  "window { background: rgba(20,20,20,%.2f); }"
+  ".key { border-radius: %dpx; background: rgba(43,43,43,%.2f); color: #eee;"
   "       font-size: %dpx; }"
   ".key.half { font-size: %dpx; }"
   ".key label { color: #eee; }"
-  ".key.pressed { background: #555; }"
-  ".key.active-mod { background: #3584e4; }"
+  ".key.pressed { background: rgba(85,85,85,%.2f); }"
+  ".key.active-mod { background: rgba(53,132,228,%.2f); }"
   ".key.active-mod label { color: #fff; }";
+
+/* ---------------------------------------------------------------------------
+ * Look: how solid the board is, and whether it pushes windows up.
+ *
+ * Both come from one runtime file the plugin writes from its settings,
+ * $XDG_RUNTIME_DIR/gimbal-look, as `opacity=0.50 reserve=0`, watched with
+ * inotify so a slider in the settings panel changes the board live with no
+ * restart and nothing polling. Legends stay opaque whatever the opacity: a
+ * key you can read through is the point, a legend you cannot read is not.
+ *
+ * `reserve` is the layer-shell exclusive zone: on, tiled windows shrink to
+ * sit above the board; off, the board floats over them, which is what a
+ * translucent board is for.
+ * ------------------------------------------------------------------------ */
+static double   g_opacity = 0.5;
+static gboolean g_reserve = FALSE;
+static GFileMonitor *look_monitor;
+static void apply_geometry(void);
+
+static void read_look(void) {
+  char *path = g_strdup_printf("%s/gimbal-look", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
+  char *text = NULL;
+  double opacity = 0.5; gboolean reserve = FALSE;
+  if (g_file_get_contents(path, &text, NULL, NULL)) {
+    char **kv = g_strsplit_set(g_strstrip(text), " \n", -1);
+    for (int i = 0; kv[i]; i++) {
+      if (g_str_has_prefix(kv[i], "opacity=")) opacity = g_ascii_strtod(kv[i] + 8, NULL);
+      else if (g_str_has_prefix(kv[i], "reserve=")) reserve = g_str_equal(kv[i] + 8, "1");
+    }
+    g_strfreev(kv);
+  }
+  g_free(text); g_free(path);
+  if (!(opacity >= 0.15 && opacity <= 1.0)) opacity = 0.5;   /* also catches NaN */
+  if (opacity == g_opacity && reserve == g_reserve) return;
+  g_opacity = opacity; g_reserve = reserve;
+  apply_geometry();   /* re-derives the CSS and the exclusive zone */
+}
+static void on_look_changed(GFileMonitor *m, GFile *f, GFile *o, GFileMonitorEvent e, gpointer u) {
+  (void)m; (void)f; (void)o; (void)u;
+  if (e == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || e == G_FILE_MONITOR_EVENT_CREATED
+      || e == G_FILE_MONITOR_EVENT_CHANGED || e == G_FILE_MONITOR_EVENT_DELETED || e == G_FILE_MONITOR_EVENT_MOVED_IN)
+    read_look();
+}
+static void watch_look(void) {
+  char *path = g_strdup_printf("%s/gimbal-look", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
+  GFile *f = g_file_new_for_path(path);
+  look_monitor = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+  if (look_monitor) g_signal_connect(look_monitor, "changed", G_CALLBACK(on_look_changed), NULL);
+  g_object_unref(f); g_free(path);
+  read_look();
+}
 
 /* Where the Framework mark for the Super key lives. Checked in order so that a
  * rootless `make install` (into ~/.local) and a packaged one (into /usr) both
@@ -652,7 +703,10 @@ static void apply_geometry(void) {
      * satisfy them, silently breaking the proportion this is all in aid of.
      * Measured: 399 px tall instead of 338. */
     int fonthalf = (int)lround(unit * 0.22);
-    char *sheet = g_strdup_printf(CSS_FMT, radius, fontpx, fonthalf);
+    /* The window's own background is a shade darker than the keys, and
+     * scales with them. Solid at 1.0, gone at 0. */
+    char *sheet = g_strdup_printf(CSS_FMT, 0.92 * g_opacity, radius, g_opacity, fontpx, fonthalf,
+                                  g_opacity, g_opacity);
     gtk_css_provider_load_from_string(g_css, sheet);
     g_free(sheet);
   }
@@ -686,7 +740,9 @@ static void apply_geometry(void) {
    * bar. Same reasoning as the side gutters: a gesture area over a key is a
    * key you cannot press. */
   gtk_layer_set_margin(GTK_WINDOW(g_win), GTK_LAYER_SHELL_EDGE_BOTTOM, g_gutter);
-  gtk_layer_set_exclusive_zone(GTK_WINDOW(g_win), kbd_h + g_gutter);
+  /* Reserve the strip only when asked: a translucent board is meant to sit
+   * over the windows, not to shrink them. */
+  gtk_layer_set_exclusive_zone(GTK_WINDOW(g_win), g_reserve ? kbd_h + g_gutter : 0);
 }
 
 static void on_monitor_changed(GObject *o, GParamSpec *p, gpointer u) {
@@ -1196,6 +1252,7 @@ static void on_activate(GtkApplication *app, gpointer u) {
       g_signal_connect(m, "notify::geometry", G_CALLBACK(on_monitor_changed), NULL);
     }
   }
+  watch_look();   /* reads the look and applies the geometry once */
   apply_geometry();
   hypr_subscribe();
 
