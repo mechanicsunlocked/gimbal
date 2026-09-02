@@ -2037,3 +2037,187 @@ While the keyboard is hidden the whole edge works, so a marker would be
 clutter. Once it is up the live area is no longer where anyone would guess, so
 each gutter draws a thin bar down its middle for exactly as long as the
 keyboard is out. Nobody discovers an invisible 30 px strip by accident.
+
+---
+
+## 15. Phase 0 for the keyboard integration (2026-09-02)
+
+Four questions asked before any code was changed, each answered on this
+machine. Same host as §0; since then the packages have moved on to
+Hyprland 0.56.2 (efb5099), Quickshell 0.3.1, fcitx5 5.1.21, gtk4-layer-shell
+1.3.0, GLib 2.88.3, kernel 7.1.9-arch1-2. The machine was docked (eDP-1 plus
+DP-3) and in laptop mode throughout, and every scratch surface and rule below
+was removed again afterwards (`hyprctl reload`, `hyprctl configerrors` empty).
+
+### 15.1 fcitx5 runs and holds the seat's input-method-v2 slot — yes
+
+Running, as Omarchy's own user service, with the Wayland IM addon loaded and
+its virtual keyboard on the seat:
+
+    $ pgrep -a fcitx5
+    1353 /usr/bin/fcitx5 --disable notificationitem
+    $ systemctl --user is-active omarchy-fcitx5.service
+    active
+    $ grep -c libwaylandim /proc/$(pgrep -x fcitx5)/maps
+    5
+    $ hyprctl devices | grep -A1 hl-virtual-keyboard
+                hl-virtual-keyboard-fcitx5
+                    rules: r "", m "", l "us", v "altgr-intl", o "compose:caps,shift:both_capslock_cancel"
+
+Holding the slot was re-measured rather than carried over from §8.1. A
+40-line `wayland-client` program binds `zwp_input_method_manager_v2`, calls
+`get_input_method` on the seat, and reports which event comes back. (The
+protocol XML came from fcitx5's own tree,
+`src/lib/fcitx-wayland/input-method-v2/`, because `wlr-protocols` is not
+packaged here.)
+
+    zwp_input_method_manager_v2 advertised: yes
+    get_input_method -> UNAVAILABLE: another client already holds the seat's input method (activate=0 done=0)
+
+So the design holds: we never claim `zwp_input_method_v2`; fcitx5 keeps it.
+`fcitx5-remote` prints `1` — running, no input context active — which is its
+ordinary idle state.
+
+### 15.2 `hl.layer_rule` accepts `order`, and it does nothing — no
+
+The Lua stub (`/usr/share/hypr/stubs/hl.meta.lua`, `HL.LayerRuleSpec`)
+declares `order? integer|boolean`, and the API genuinely knows the field: an
+unknown one is refused, `order` is not, and a rule object comes back:
+
+    $ hyprctl eval 'hl.layer_rule({ match = { namespace = "^x$" }, bogus_key_xyz = 5 })'
+    error: ...: hl.layer_rule: unknown field 'bogus_key_xyz'
+    $ hyprctl eval 'hl.layer_rule({ match = { namespace = "^x$" }, order = 5 })'
+    ok                                              (hyprctl configerrors: empty)
+    -- written from Lua to a file:
+    HL.LayerRule(0x55fb057687d0) enabled=true type=userdata
+
+It has no effect on stacking. Two 200x200 Quickshell `PanelWindow`s on the
+overlay layer of eDP-1, `gimbal-scratch-a` (red, mapped first) and
+`gimbal-scratch-b` (blue, mapped second), overlapping at (500,400); the pixel
+there read back with `grim -s 1 -g "500,400 1x1" -t ppm`:
+
+| step | rule on `gimbal-scratch-a` | applied | pixel at overlap | `hyprctl layers` |
+|---|---|---|---|---|
+| 1 | none | — | blue | a, b |
+| 2 | `order = 5` | while both were mapped | blue | a, b |
+| 3 | `order = 5` | before both were remapped | blue | a, b |
+| 4 | `order = 5`, plus `order = 9` on b | while mapped | blue | a, b |
+| 5 | `order = 5` before map, then the menu summoned and hidden to force a re-arrange | | blue | a, b |
+| 6 | `order = -9`, re-arranged the same way | | blue | a, b |
+
+The control that says the eval path itself works: `dim_around = true` on
+`gimbal-scratch-b`, through the same `hyprctl eval`, darkened the wallpaper
+pixel at (100,400) from `22 21 23` to `13 13 14` within a second, while
+mapped, and stayed applied across a remap. Layer rules from Lua apply live;
+`order` in particular is parsed, stored, and never consulted for stacking in
+this build. Upstream issue **C** is warranted (`upstream/C-layer-rule-order.md`).
+
+Also settled on the way: `hyprctl layers` lists each level bottom to top. In
+every row above the listing agreed with the pixel, and in §15.5 both flipped
+together.
+
+### 15.3 socket2 emits `openlayer` / `closelayer` for the menu — yes
+
+    $ socat -u UNIX-CONNECT:$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock STDOUT &
+    $ omarchy-shell shell summon omarchy.menu '{}'; sleep 1.5; omarchy-shell shell hide omarchy.menu
+    openlayer>>omarchy-menu
+    closelayer>>omarchy-menu
+
+Nothing else fired for the menu itself. Two side facts from the same capture:
+the menu maps on the *focused* monitor (DP-3, where the terminal was), and
+fcitx5's own virtual keyboard emits an `activelayout` pair as the menu takes
+and releases keyboard focus, so anything reacting to `activelayout` still has
+to de-duplicate, as §3.1g found.
+
+### 15.4 The fcitx5 "DBus Virtual Keyboard" addon, and its exact contract — present
+
+    $ grep -E '^(Library|Category|OnDemand|UIType|Version)' /usr/share/fcitx5/addon/virtualkeyboard.conf
+    Library=libvirtualkeyboard
+    Category=UI
+    Version=5.1.21
+    OnDemand=True
+    UIType=OnScreenKeyboard
+
+The contract below is read from fcitx5's own source at the same version
+(`src/ui/virtualkeyboard/virtualkeyboard.cpp`, cloned read-only into a
+scratch directory), not from `strings`. It agrees with what §3.1a captured
+live and with the two reference clients: `fcitx5-osk` (`src/dbus/server.rs`,
+which cites the same file), and `fcitx-virtualkeyboard-adapter`, which turned
+out to be an fcitx5 *addon* that runs a shell command on IM activate and
+deactivate rather than a client of this interface — a comparison for the
+event source, not for the protocol.
+
+**What we own.** Bus name `org.fcitx.Fcitx5.VirtualKeyboard`, object
+`/org/fcitx/virtualkeyboard/impanel`, interface
+`org.fcitx.Fcitx5.VirtualKeyboard1`. fcitx5 calls these on us, each as a
+plain method call it never waits on (`createMethodCall(...).send()`):
+
+| method | in | meaning |
+|---|---|---|
+| `ShowVirtualKeyboard` | — | map |
+| `HideVirtualKeyboard` | — | unmap |
+| `NotifyIMActivated` | `s` | IM unique name, e.g. `keyboard-us` |
+| `NotifyIMDeactivated` | `s` | same |
+| `NotifyIMListChanged` | — | the IM group changed |
+| `UpdatePreeditArea` | `s` | preedit text |
+| `UpdatePreeditCaret` | `i` | caret index, `-1` for none |
+| `UpdateCandidateArea` | `asbbii` | candidates, hasPrev, hasNext, pageIndex, cursor |
+
+**What fcitx5 owns**, object `/virtualkeyboard` on `org.fcitx.Fcitx5`:
+
+| interface | method | in | exported |
+|---|---|---|---|
+| `org.fcitx.Fcitx.VirtualKeyboard1` | `ShowVirtualKeyboard`, `HideVirtualKeyboard`, `ToggleVirtualKeyboard` | — | always (§3 introspected it) |
+| `org.fcitx.Fcitx5.VirtualKeyboardBackend1` | `ProcessKeyEvent` | `uuubu` | only while the addon is resumed |
+| | `ProcessVisibilityEvent` | `b` | " |
+| | `SelectCandidate` | `i` | " |
+| | `PrevPage`, `NextPage` | — | " |
+| | `SetVirtualKeyboardFunctionMode` | `u` | " |
+
+**How activation works, from the source.** fcitx5 watches our bus name with
+a `ServiceWatcher`; the addon is `available_` exactly while someone owns it.
+`ShowVirtualKeyboard` on `/virtualkeyboard` is `showVirtualKeyboardForcibly()`:
+it sets `InputMethodMode::OnScreenKeyboard`, which makes
+`UserInterfaceManager::updateAvailability()` switch the UI addon to
+`virtualkeyboard` (what `CurrentUI` reports) and call `resume()` — and only a
+resumed addon exports the backend interface and turns focus-in and focus-out
+into `ShowVirtualKeyboard` / `HideVirtualKeyboard` on us. That is the "two
+conditions" of §3.1, with the mechanism attached. Nothing in `~/.config/fcitx5`
+has to change for it: the addon is `OnDemand` and loads when asked.
+
+**How it leaves that mode, from the source.** `resume()` installs a
+`PreInputMethod` watcher on `InputContextKeyEvent`: any key whose state lacks
+`KeyState::Virtual` calls `setInputMethodMode(PhysicalKeyboard)`, the UI
+switches back to `classicui`, and `suspend()` sends one `HideVirtualKeyboard`
+on the way out. Keys injected through `ProcessKeyEvent` are stamped `Virtual`
+(`VirtualKeyboardEvent::toKeyEvent`); keys arriving through the compositor —
+ours, over `zwp_virtual_keyboard_v1` — are not. This is §3.1j's "our own
+typing hides it", now with the line of code behind it. There is **no
+configuration switch**: `virtualKeyboardAutoShow_` and `AutoHide_` have
+setters and nothing in the tree calls them. So the first rung of the Phase 3
+mitigation ladder is empty, and the second — ignore a Hide inside a grace
+window after our own key, and re-assert — is the one to measure.
+
+**One claim in §3.1h does not survive the source.** `ProcessVisibilityEvent`
+is `void processVisibilityEvent(bool) {}` in 5.1.21 — a no-op. §3.1h saw
+fcitx5 revert when it was not sent; whatever caused that, it was not this
+method. Re-measured in Phase 3 (§16) before anything depends on it either way.
+
+### 15.5 Restacking without unmapping: a live `set_layer` bounce works
+
+With `order` inert, the brief's fallback is a remap on
+`openlayer>>omarchy-menu`. Something cheaper was tried first: layer-shell v2+
+lets a mapped surface change layer, and Hyprland puts a surface that changes
+layer at the top of its new one. Same two scratch surfaces, `a` under `b`;
+at t=6 s `a` set `WlrLayershell.layer = WlrLayer.Top`, at t=6.5 s back to
+`WlrLayer.Overlay`:
+
+    t=5.8  overlap: 0 0 255     hyprctl layers: a, b
+    t=8    overlap: 255 0 0     hyprctl layers: b, a
+
+No unmap, no exclusive-zone reflow, no `openlayer`/`closelayer` event. The
+two `set_layer` requests have to land in *separate* commits — Hyprland only
+moves a surface when the committed layer differs from the one it holds —
+which is why it is two steps and not one. This is the Phase 1 mechanism, for
+the keyboard above the menu and for the knobs above the keyboard now that
+both live on the overlay layer.
