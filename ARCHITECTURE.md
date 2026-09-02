@@ -20,9 +20,11 @@ fix for a firmware probe race that otherwise costs the tablet switch on some
 boots.
 
 Plus **the keyboard**: `fw12-oskbd`, a GTK4 layer-shell board laid out like the
-machine's own, and a shell plugin that is one draggable button to show and hide
-it, four edge-swipe strips, and the focus handling that makes a resting hand
-harmless. See Component B.
+machine's own. While the machine is folded it is a resident process that
+appears when a text field takes focus — it registers with fcitx5 as its
+virtual keyboard over D-Bus, and fcitx5, which holds the input method, says
+when — and when the Omarchy menu opens. Two draggable knobs summon it for
+everything else. See Component B.
 
 ---
 
@@ -100,23 +102,99 @@ Framework key as Super, and a faithful arrow cluster. It was written for
 [`fw12tab`](https://github.com/mechanicsunlocked/fw12tab) and is vendored here
 (same author, same MIT licence).
 
-`plugin/` is an Omarchy shell plugin installed to
-`~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/`. It draws a single round,
-draggable button carrying the Framework mark, and runs or does not run the
-keyboard.
+`Panel.qml` and `BarWidget.qml` are an Omarchy shell plugin installed to
+`~/.config/omarchy/plugins/io.github.mechanicsunlocked.gimbal/`. They draw two
+round, draggable knobs, the two bar icons, and the settings panel; they own
+the keyboard's lifetime; and they hold the policy for when it may appear on
+its own.
 
-### Why a button rather than automatic pop-up
+### The daemon
 
-fcitx5 holds Hyprland's single `input-method-v2` slot. Measured, not assumed —
-Hyprland answers a second client with `unavailable` (§8.1). Any on-screen
-keyboard here is therefore blind to which text field has focus, and something
-external has to decide when it appears.
+While the machine is folded, `fw12-oskbd` is a resident process: the plugin
+starts it hidden when the mode file says `tablet` and kills it when the mode
+goes back to `laptop`, so laptop mode carries nothing resident. Showing and
+hiding it is a signal — `SIGUSR1` maps the surface, `SIGUSR2` unmaps it — so
+the path a finger is waiting on never spawns a process, and so there is
+something already running for fcitx5's show to arrive at. `SIGTERM` leaves
+cleanly, releasing every latched modifier.
 
-The alternative was to let fcitx5 make that decision through its
-`virtualkeyboard` UI addon and forward the result. That works, and most of the
-daemon for it is in git history, but it drags back the fight from §3.1j:
-fcitx5 hides the keyboard the instant it sees a key event, and `squeekboard`'s
-keys *are* key events. A button has none of that in it.
+It publishes `visible` or `hidden` to `$XDG_RUNTIME_DIR/gimbal-osk`, from its
+own map and unmap rather than from the last request, so a reader sees the
+truth of the surface; if it dies the word goes to `hidden` and the next tap
+starts it again. The bar icon, the knobs and the Lua's `follow_mouse` all read
+that one file. `g_file_set_contents` renames a complete file into place, and
+the Quickshell watchers survive the rename (§16.1). It dies with its parent
+(`PR_SET_PDEATHSIG`), so a shell restart cannot leave a second one behind.
+
+Laptop mode keeps the old shape: `SUPER + B` starts it showing and it lives
+exactly as long as it is on screen. Measured in §16.3: exactly one process
+through any number of toggles, the state file and `follow_mouse` tracking
+twenty rapid toggles with no mismatch, nothing surviving an unfold.
+
+### Why it appears by itself, and why the knobs stay
+
+fcitx5 holds Hyprland's single `input-method-v2` slot. Measured twice, not
+assumed — Hyprland answers a second client with `unavailable` (§8.1, §15.1).
+Any on-screen keyboard here is therefore blind to which text field has
+focus. fcitx5 is not: it is the input method, so it knows exactly when a
+field takes or loses focus, and its "DBus Virtual Keyboard" addon hands that
+to whoever owns the bus name `org.fcitx.Fcitx5.VirtualKeyboard` as
+`ShowVirtualKeyboard` and `HideVirtualKeyboard` calls. While folded, the
+daemon owns that name, exports the object fcitx5 expects, and maps or
+unmaps on those two calls. The contract is read from fcitx5's own source and
+measured here (§15.4, §17); nothing in fcitx5 is configured, stopped or
+replaced — the addon is on demand and loads when asked.
+
+Two gates, both read per event from one-word runtime files: `gimbal-mode`
+must say `tablet`, and `gimbal-autoshow`, which the plugin writes from the
+`autoShow` setting and the Moonlight hold-back, must not say `off`. Policy
+stays in the plugin, mechanism in the daemon, and nothing polls.
+
+The knobs stay because not everything a keyboard is wanted for is a text
+field: keybinds, the terminal that never activates an input method, a
+password prompt that a hardware keyboard has just claimed. And who asked
+matters: a keyboard the user summoned stays until the user puts it away;
+one that came up by itself goes away by itself, after a 300 ms wait that any
+Show cancels, since focus moving between fields is a Hide and a Show a few
+milliseconds apart (§3.1i).
+
+**The one real fight, and how it is won.** fcitx5 hides its keyboard the
+moment it sees a key that did not come through its own D-Bus injection — it
+takes any such key for a hardware keyboard and switches mode — and our keys
+come through the compositor, so every key we send is one of those. Measured:
+the Hide arrives within 20 ms of the keystroke, every time, and the source
+has no switch for it (§15.4, §17.1). So a Hide within 300 ms of our own key
+is ours: ignored, and answered by asserting the on-screen mode again. Measured
+through the daemon's own key path, the board stays up and fcitx5 is back in
+on-screen mode within 200 ms (§17.7). A hardware keyboard — Bluetooth, while
+folded — still turns auto-show off, which is fcitx5's design and the right
+call; one knob tap turns it back on (§17.8).
+
+**Leaving without breaking fcitx5.** Releasing the name while fcitx5 is in
+on-screen mode leaves it with no user interface at all, and nothing but a
+hardware-looking key puts the mode back (§17.4). So the daemon's last act is
+one key with no symbol on it, evdev 240, then the name goes. fcitx5 ends
+every run on `classicui`.
+
+**The menu is not a text field**, as far as fcitx5 can tell: opening it
+activates an input context and never asks for the keyboard, because its
+search is a key catcher rather than a `TextInput` (§17.3). It is driven by
+typing, so the daemon treats `openlayer>>omarchy-menu` as a field taking
+focus, on the same gate, and `closelayer` as it losing focus — unless a
+field takes over, whose Show cancels the pending hide.
+
+### Above the menu
+
+The menu is a full-screen overlay-layer surface whose scrim cancels on any
+click, and within one layer Hyprland stacks by map order, so a menu opened
+after the keyboard sat on top of it. The keyboard moved to the overlay layer,
+and on `openlayer>>omarchy-menu` it steps to the top layer and back in two
+commits: Hyprland re-inserts a surface that changes layer at the top of its
+new one, with no unmap, no flash and no reflow (§15.5). The clean fix would
+be a layer-rule `order`; this Hyprland accepts one from Lua and ignores it
+(§15.2, upstream draft C). The knobs share the overlay layer now, so the
+plugin bounces them the same way whenever the keyboard maps or the menu
+closes, and a knob resting on the keyboard stays on top and draggable.
 
 ### Why it uploads the system keymap instead of inventing one
 
@@ -154,7 +232,13 @@ rectangle — verified in the protocol trace. Everything outside it passes
 through to whatever is underneath.
 
 **Overlay layer, not top.** The moment you most want a keyboard is inside a
-fullscreen Moonlight session, and `top` sits below fullscreen windows.
+fullscreen Moonlight session, and `top` sits below fullscreen windows. The
+keyboard joined the knobs there for the menu's sake; see "Above the menu".
+
+**The internal panel, by connector name.** Both the knobs and the keyboard
+pick `eDP-*` and fall back to the first monitor only if there is none. GDK's
+monitor 0 was the external display when docked, so the board sized itself
+for 3440x1440 and mapped wherever focus happened to be.
 
 **Position is stored as a fraction of each axis, not in pixels.** This machine
 rotates; 1200×750 becomes 750×1200, and a pixel position would land off screen
@@ -180,7 +264,9 @@ touch-down and returns on release (§11). A tap is too short to notice; a swipe
 or a resting hand holds it, and everything typed in that time goes nowhere.
 
 The change is made by Component A, not by the keyboard, because it has to be
-reverted on unfold whether or not the keyboard was ever shown.
+reverted on unfold whether or not the keyboard was ever shown. It is held
+only while the state file says `visible`, and the daemon is the one writer
+of that file.
 
 ### The palm guard
 
@@ -243,9 +329,10 @@ It was still bad to type on, and that is the only test that counts. Keys were
 missed, the space bar worst of all; each fix found a real defect and the thing
 underneath was still unpleasant.
 
-The code is in git history if it is ever wanted. `FINDINGS.md` 3.x keeps the
-measurements, because what was learned about fcitx5's virtual-keyboard protocol
-is worth more than the code was.
+The rendering went; the fcitx5 half came back. What `FINDINGS.md` 3.x learned
+about the virtual-keyboard protocol is now inside `fw12-oskbd`, where the
+keys are drawn by GTK and typed over `zwp_virtual_keyboard_v1` as before, and
+only the show and hide come from fcitx5.
 
 ### What was tried instead, and why it is not here
 
@@ -281,11 +368,13 @@ switch device the binds simply never fire, and the module stays in laptop mode.
 ---
 ## Known limitations, stated up front
 
-- **Nothing knows when a text field gains focus.** fcitx5 holds the single
-  `input-method-v2` slot (§8.1), so the keyboard cannot pop up by itself. It is
-  summoned by the button, the bottom-edge swipe, or `SUPER + B`. This is a
-  deliberate trade, not an oversight — see "Why a button rather than automatic
-  pop-up".
+- **Not every text field asks for the keyboard.** fcitx5 hears about a field
+  only from clients that speak `text-input-v3` or its own Qt and GTK modules.
+  The Omarchy menu is handled on our side; a terminal that never activates
+  an input method is not, and a Qt field is unverified (§17.5). The knobs
+  and `SUPER + B` are there for those.
+- **A hardware keyboard turns auto-show off** until the next knob tap
+  (§17.8). fcitx5's design, and the right one for a Bluetooth keyboard.
 - **The bar is hard to hit by touch** (§5.4) — 6.9 mm targets, and a missed tap
   reaching the wallpaper opens the picker on double-click. Out of scope here by
   decision; worth reporting upstream.
@@ -308,6 +397,9 @@ switch device the binds simply never fire, and the module stays in laptop mode.
 | Component A | fold in and out, all four orientations, `SUPER + R` lock, `hyprctl reload` idempotency, suspend/resume |
 | System fix | installed; the probe race has not recurred |
 | Keyboard | types, keybinds fire, AltGr and dead keys work, layout follows `input:kb_layout`, geometry matches the real board and re-lays out on rotation |
+| Daemon | resident while folded, signal show/hide, one process through 20 rapid toggles, gone on unfold (§16) — by measurement, not yet by hand |
+| Auto-show | GTK4 entry and foot show and hide it; the menu shows it; our own keys do not dismiss it; fcitx5 ends on `classicui` (§17) — by measurement, not yet by hand |
+| Menu | keyboard listed above `omarchy-menu` while both are mapped, knob above the keyboard (§15.5) — by measurement, not yet by hand |
 | Button | tap toggles, drag moves it, position survives a rotation and a shell restart |
 | Swipes | all four gestures; strips place themselves around the bar and the keyboard |
 | Focus | survives a resting hand while folded |
@@ -336,5 +428,11 @@ has none, and a git URL is the whole distribution story.
 2. **The physical US International keyboard**, when it arrives — to confirm the
    on-screen board and the real one agree key for key, which a screenshot
    cannot show.
-3. **Nothing else is known to be outstanding.** The remaining known defects are
-   listed above under limitations, and both are other people's code.
+3. **Hands on the machine** for everything in §16 and §17: the fold is
+   simulated there, and the keys came from a script. `TESTING.md` has the
+   list.
+4. **The lock screen.** Under `ext-session-lock` only lock surfaces render
+   or receive input, so the daemon's surface cannot appear there by
+   protocol. The keypad for it is QML inside a clone of `omarchy.lock`, on
+   the `phase4-lock` branch, with its own README on why it cannot ship in
+   this plugin.
