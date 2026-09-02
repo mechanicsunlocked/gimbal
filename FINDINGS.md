@@ -2471,3 +2471,81 @@ Whether taps reach the keypad under `ext-session-lock`, whether the
 `MouseArea` on the field opens it, the wrong-password state with the keypad
 up, the idle-blank interplay, and portrait. All on the hands-on list; the
 clone is the stock code for everything the keypad does not touch.
+
+---
+
+## 19. Hands-on report, and what it turned out to be (2026-09-02)
+
+Two reports from the first real test, both reproduced or explained on this
+machine the same afternoon.
+
+### 19.1 "Opening the menu brings the keyboard up, and a key press closes the menu"
+
+Not stacking. Reproduced in every ordering — keyboard shown for the menu,
+keyboard re-shown then the menu, and the user's exact sequence twice — the
+keyboard is listed above `omarchy-menu` in `hyprctl layers`, and a pixel on a
+key face reads `43 43 43` with the menu open exactly as without it, while a
+pixel beside the keyboard goes from wallpaper to scrim. A key injected while
+the menu is open, from a second virtual keyboard or through the daemon's own
+key path, filters the menu and does not close it (`closelayer` never fires).
+
+What closes it is the *touch*. Hyprland 0.56.2's `mouseMoveUnified()`
+(`src/managers/input/InputManager.cpp`, fetched at tag `v0.56.2`), which
+`onTouchDown()` calls through `refocus()`:
+
+    // forced above all
+    if (!g_pInputManager->m_exclusiveLSes.empty()) {
+        if (!foundSurface) foundSurface = ...layerPopupSurfaceAt(mouseCoords, &m_exclusiveLSes, ...);
+        if (!foundSurface) foundSurface = ...layerSurfaceAt(mouseCoords, &m_exclusiveLSes, ...);
+        if (!foundSurface) foundSurface = (*m_exclusiveLSes.begin())->wlSurface()->resource();
+    }
+
+and `m_exclusiveLSes` is exactly the mapped layer surfaces whose keyboard
+interactivity is `EXCLUSIVE` (`LayerSurface.cpp` lines 185–188, 382–387).
+The Omarchy menu is `WlrKeyboardFocus.Exclusive`. So while it is open, every
+pointer and touch event on that monitor goes to the menu, before the
+compositor looks at what is drawn above it — the keyboard, the knobs,
+anything. The finger lands on the menu's full-screen `MouseArea`, which is
+`onClicked: root.cancel()`. Stacking never entered into it, which is why
+Phase 1's measurements passed and the finger failed.
+
+**An on-demand layer is not in that list, and loses nothing.** Measured with
+a scratch full-screen overlay `PanelWindow` carrying a key catcher, once as
+`Exclusive` and once as `OnDemand`, a key injected over
+`zwp_virtual_keyboard_v1` after it mapped:
+
+    exclusive:  activeFocus=true   key text='a'
+    ondemand:   activeFocus=true   key text='a'
+
+`LayerSurface.cpp` line 190 is why: on map, `GRABSFOCUS` is true for any
+interactivity other than `NONE`, so an on-demand layer takes keyboard focus
+exactly as an exclusive one does. And a touch on the keyboard afterwards
+does not move focus away from it: line 733 refocuses onto a layer surface
+only if that surface's interactivity is not `NONE`, and the keyboard's is
+`NONE`. The whole fix, then, is one word in `plugins/menu/Menu.qml`:
+
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+That file is Omarchy's. Draft **D** asks for it upstream; a clone
+(`omarchy plugin clone omarchy.menu`) with the same one-word change is the
+local version, and it is a decision for the owner of the machine, not for
+this repo. Nothing on our side can route a touch past an exclusive layer:
+the only surfaces Hyprland consults before that list are input-method
+popups, its own permission windows, and the session lock. Making the
+keyboard exclusive too would win the touch and lose the keys, since
+Hyprland would then focus the keyboard's own surface and the typed keys
+would go to it.
+
+### 19.2 "Locked in laptop mode, then folded: no keypad"
+
+The fold did reach the lock screen: the shell log has `lock-requested` at
+12:03:48 and `unlocked` at 12:04:12, and `gimbal-mode` was last rewritten at
+12:04:09 — an unfold, under lock, which means the fold before it was seen
+and acted on. What did not happen was a tap on the field, or the tap did not
+open the keypad; the journal cannot say which, because nothing logged. So
+the keypad now opens by itself the moment the mode says `tablet` — locked
+first and folded second is the case with no other way in — and logs one
+line per fold change and per open, in the lock service's own voice. Rendered
+in the harness: keypad up with the mode faked to `tablet`, stock view with
+`laptop`. Whether a touch reaches the keypad under `ext-session-lock` is
+still a hands-on question; the log will now say whether the fold arrived.

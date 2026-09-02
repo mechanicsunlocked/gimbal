@@ -91,6 +91,24 @@ stays until the next real hide or a knob tap.
 `"autoShow": false` in `~/.config/omarchy/gimbal.json`. The knobs, the bar
 icon and `SUPER + B` are unaffected.
 
+### Typing on the keyboard closes the Omarchy menu
+
+**What you see.** Folded, you open the menu, the keyboard comes up, and the
+first key you touch closes the menu.
+
+**Why.** Not stacking — the keyboard is drawn above the menu, pixel-verified.
+Hyprland routes every pointer and touch event to layer surfaces with
+*exclusive* keyboard interactivity before it hit-tests anything else, and the
+menu is one. The finger lands on the menu's scrim, which cancels it
+(FINDINGS 19.1, with the compositor source).
+
+**Status.** Not fixable from this side; the fix is one word in Omarchy's
+`Menu.qml`, `WlrKeyboardFocus.OnDemand`, which keeps focus on map and typing
+intact (measured). Upstream draft D asks for it. Until then, a clone
+(`omarchy plugin clone omarchy.menu`, then that one word) is the local
+version, and whether to run one is the machine owner's call. Keys sent
+without a touch — a Bluetooth keyboard — reach the menu fine.
+
 ### fcitx5 can be left with no user interface
 
 **What you see.** After the keyboard process was killed outright, fcitx5
