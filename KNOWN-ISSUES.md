@@ -118,9 +118,10 @@ shows no candidate window or popups; `fcitx5-remote` still answers.
 
 **Why.** While the keyboard is registered, fcitx5 is in on-screen mode.
 Releasing the registration in that mode leaves it with no valid UI, and the
-only thing that puts the mode back is a hardware-looking key from the
-registered keyboard (FINDINGS 17.4). The daemon sends one before it leaves,
-so a clean exit — unfold, `SIGTERM`, a shell restart — ends on `classicui`
+only thing that puts the mode back is a key fcitx5 did not inject itself
+(FINDINGS 17.4). The daemon sends one before it leaves, through fcitx5's own
+D-Bus input-context interface so it works whatever has focus (FINDINGS 19.4),
+and a clean exit — unfold, `SIGTERM`, a shell restart — ends on `classicui`
 every time. A `SIGKILL` skips it.
 
 **If it happens.** `systemctl --user restart omarchy-fcitx5.service`.

@@ -754,8 +754,12 @@ static void restack(void) {
  *
  * Leaving needs care too: releasing the name while fcitx5 is in on-screen
  * mode leaves it with no user interface at all, and the only thing that puts
- * the mode back is a hardware-looking key -- so the last act is one key with
- * no symbol on it (evdev 240, KEY_UNKNOWN), then the name goes. Measured.
+ * the mode back is a key event fcitx5 did not inject itself. A key through
+ * the compositor only reaches fcitx5 while some client has a text field
+ * focused, which after a menu or a game is exactly not the case (FINDINGS
+ * 19.4). So the last act is a key through fcitx5's own D-Bus frontend: one
+ * input context of our own, one key with no symbol on it, the context
+ * destroyed, then the name goes. It needs no focus anywhere. Measured.
  * ------------------------------------------------------------------------ */
 #define VK_NAME   "org.fcitx.Fcitx5.VirtualKeyboard"
 #define VK_PATH   "/org/fcitx/virtualkeyboard/impanel"
@@ -898,8 +902,43 @@ static void fcitx_connect(void) {
                                     on_fcitx_appeared, on_fcitx_vanished, NULL, NULL);
 }
 
-/* The last act before quitting: hand fcitx5 its user interface back. */
+/* The last act before quitting: hand fcitx5 its user interface back.
+ *
+ * Synchronous on purpose: this runs once, on the way out, and each call is
+ * to a local process with a 300 ms ceiling. fcitx5's frontend forces focus
+ * onto the context for a key event, so no FocusIn is needed. */
+static void fcitx_hand_back(void) {
+  if (!bus || !name_owned) return;
+  GError *err = NULL;
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a(ss)"));
+  g_variant_builder_add(&b, "(ss)", "program", "fw12-oskbd");
+  GVariant *r = g_dbus_connection_call_sync(bus, "org.fcitx.Fcitx5", "/org/freedesktop/portal/inputmethod",
+                                            "org.fcitx.Fcitx.InputMethod1", "CreateInputContext",
+                                            g_variant_new("(a(ss))", &b), G_VARIANT_TYPE("(oay)"),
+                                            G_DBUS_CALL_FLAGS_NONE, 300, NULL, &err);
+  if (!r) {
+    g_warning("fw12-oskbd: cannot hand fcitx5 its UI back: %s", err ? err->message : "?");
+    g_clear_error(&err);
+    return;
+  }
+  const char *path = NULL;
+  g_variant_get(r, "(&o@ay)", &path, NULL);
+  char *ic = g_strdup(path);
+  g_variant_unref(r);
+  /* evdev 240 (KEY_UNKNOWN) is xkb 248, which carries no symbol in any layout. */
+  r = g_dbus_connection_call_sync(bus, "org.fcitx.Fcitx5", ic, "org.fcitx.Fcitx.InputContext1", "ProcessKeyEvent",
+                                  g_variant_new("(uuubu)", 0u, 248u, 0u, FALSE, 0u), NULL,
+                                  G_DBUS_CALL_FLAGS_NONE, 300, NULL, NULL);
+  if (r) g_variant_unref(r);
+  r = g_dbus_connection_call_sync(bus, "org.fcitx.Fcitx5", ic, "org.fcitx.Fcitx.InputContext1", "DestroyIC",
+                                  NULL, NULL, G_DBUS_CALL_FLAGS_NONE, 300, NULL, NULL);
+  if (r) g_variant_unref(r);
+  g_free(ic);
+}
+
 static gboolean quit_now(gpointer app) {
+  fcitx_hand_back();
   if (fcitx_watch_id) { g_bus_unwatch_name(fcitx_watch_id); fcitx_watch_id = 0; }
   if (vk_name_id) { g_bus_unown_name(vk_name_id); vk_name_id = 0; name_owned = FALSE; }
   g_application_quit(G_APPLICATION(app));
@@ -907,14 +946,7 @@ static gboolean quit_now(gpointer app) {
 }
 static gboolean on_sigterm(gpointer app) {
   quitting = TRUE;
-  if (name_owned && vkbd) {
-    send_key(KEY_UNKNOWN, WL_KEYBOARD_KEY_STATE_PRESSED);
-    send_key(KEY_UNKNOWN, WL_KEYBOARD_KEY_STATE_RELEASED);
-    wl_display_flush(wl_dpy);
-    g_timeout_add(80, quit_now, app);   /* let fcitx5 see the key before the name goes */
-  } else {
-    quit_now(app);
-  }
+  quit_now(app);
   return G_SOURCE_CONTINUE;
 }
 static gboolean on_sigusr1(gpointer u) {

@@ -2598,3 +2598,38 @@ at the centre column of a `grim -s 1` capture). The keyboard's top edge is at
 y 412, so 253 px of a 580 px card sit under it — the keyboard covers the
 card's last rows, and with the keyboard up the row "Password" is cut in half
 by it.
+
+### 19.4 The exit key only reached fcitx5 while something had a text field
+
+Found by the state check after the menu work: `CurrentUI` was empty again.
+The daemon's farewell key went over `zwp_virtual_keyboard_v1`, and the
+compositor hands a key to fcitx5 only while fcitx5 holds the keyboard grab
+for an active `text-input-v3` field, or while a Qt window's own context is
+focused. After a menu closes the focus is on whatever was behind it —
+Chromium's new tab, an empty workspace — and the key went nowhere, the mode
+stayed on-screen, and the name release left fcitx5 with no UI. Every earlier
+run had a text field focused at unfold, which is why it never showed.
+
+fcitx5's D-Bus frontend does not depend on focus at all. `CreateInputContext`
+on `/org/freedesktop/portal/inputmethod` gives a context of our own, and
+`ProcessKeyEvent` on it *forces focus onto that context* before dispatching
+(`dbusfrontend.cpp`, `processKeyEvent`: "Force focus if there's keyevent"),
+so the on-screen addon's watcher sees a key with no `Virtual` flag and flips
+the mode. Measured by hand with the spy registered and nothing focused:
+
+    spy registered            CurrentUI=virtualkeyboard
+    CreateInputContext        /org/freedesktop/portal/inputcontext/49
+    ProcessKeyEvent(0,248,0,false,0)   handled=false   spy got HideVirtualKeyboard
+    DestroyIC                 CurrentUI=classicui
+    spy stopped               CurrentUI=classicui
+
+The daemon does exactly that on `SIGTERM` now, synchronously with a 300 ms
+ceiling per call, then releases the name; the compositor key is gone. Two
+unfolds with the new binary:
+
+    focus on an empty workspace (no window at all)   -> CurrentUI=classicui, name released
+    a menu opened and closed first                   -> CurrentUI=classicui, name released
+
+One side fact: fcitx5's frontend checks that the caller of a context method
+is the context's creator, so the create, the key and the destroy have to go
+over one bus connection — a separate `gdbus call` per step is refused.

@@ -172,9 +172,12 @@ call; one knob tap turns it back on (§17.8).
 
 **Leaving without breaking fcitx5.** Releasing the name while fcitx5 is in
 on-screen mode leaves it with no user interface at all, and nothing but a
-hardware-looking key puts the mode back (§17.4). So the daemon's last act is
-one key with no symbol on it, evdev 240, then the name goes. fcitx5 ends
-every run on `classicui`.
+key fcitx5 did not inject itself puts the mode back (§17.4). A key through
+the compositor only reaches fcitx5 while some client has a field focused,
+which after a menu or a game it does not (§19.4), so the daemon's last act
+is a key through fcitx5's own D-Bus frontend — a context of its own, one key
+with no symbol, the context destroyed — and then the name goes. fcitx5 ends
+every run on `classicui`, whatever had focus.
 
 **The menu is not a text field**, as far as fcitx5 can tell: opening it
 activates an input context and never asks for the keyboard, because its
