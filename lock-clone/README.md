@@ -48,7 +48,15 @@ omarchy plugin clone omarchy.lock                     # creates ~/.config/omarch
 cp lock-clone/LockView.qml lock-clone/LockKeypad.qml ~/.config/omarchy/plugins/<you>.lock/
 ```
 
-Saving under `~/.config/omarchy/plugins/` reloads the plugin. Check it took:
+Then restart the shell. This is not optional: saving a plugin file hot-reloads
+it, but Qt caches compiled components by URL and an already-loaded `LockView`
+keeps its old code until the shell restarts (FINDINGS 3.1i and 19.3).
+
+```bash
+omarchy-restart-shell
+```
+
+Check it took:
 
 ```bash
 journalctl --user -t omarchy-shell --since -1min | grep -i -E 'lock|error'
@@ -76,3 +84,5 @@ Removing an active clone switches back to the built-in (`shell/README.md`,
 - Fingerprint, the idle blank and the wrong-password state are the stock
   code paths, untouched; the checklist in `TESTING.md` covers them with the
   keypad up.
+- The keypad opens by itself when the machine folds while locked, and the ⌄
+  key puts it away; tapping the field brings it back.

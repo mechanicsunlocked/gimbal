@@ -95,7 +95,11 @@ Folded, keyboard up, then the menu:
 What the script already checked: `hyprctl layers` lists `fw12tab-osk` above
 `omarchy-menu` while both are mapped, opening and closing the menu leaves the
 keyboard mapped, and the knob is listed above the keyboard again after the
-menu closes (FINDINGS 15.5).
+menu closes (FINDINGS 15.5). And, after the first hands-on round found a tap
+closing the menu: with the menu clone (`menu-clone/`, one word) a
+virtual-pointer click on the `a` key types into the menu and a click on the
+scrim still closes it (FINDINGS 19.3). The overlap is measured too: 253 px
+of the root card under the keyboard, landscape.
 
 ## The resident keyboard (checkpoint 2)
 
@@ -151,8 +155,10 @@ until you have used it once, keep a way to unlock that does not depend on it.
 
 - [ ] Laptop mode, `SUPER + CTRL + L`: the lock screen looks exactly as
       before. No keypad.
-- [ ] Folded, lock: tap the password field. A keypad appears. Type the
-      password on it; Enter unlocks.
+- [ ] Folded, lock: the keypad is already there (it opens on fold; ⌄ hides
+      it, a tap on the field brings it back). Type the password on it; Enter
+      unlocks. If nothing is there, `journalctl --user -t omarchy-shell | grep
+      'gimbal lock'` says whether the fold reached it.
 - [ ] A wrong password shows the error state, and the keypad stays.
 - [ ] Fingerprint still unlocks with the keypad up.
 - [ ] Leave it to idle-lock while folded; unlock by keypad.

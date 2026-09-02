@@ -196,6 +196,16 @@ be a layer-rule `order`; this Hyprland accepts one from Lua and ignores it
 plugin bounces them the same way whenever the keyboard maps or the menu
 closes, and a knob resting on the keyboard stays on top and draggable.
 
+**Stacking was necessary and not sufficient.** The first finger on the
+keyboard closed the menu anyway: Hyprland routes every pointer and touch
+event to layer surfaces with *exclusive* keyboard interactivity before it
+hit-tests anything drawn above them, and the menu is one (§19.1, from the
+0.56.2 source). Nothing on our side can route a touch past that. The menu
+has to take focus *on demand* instead — which Hyprland still grants on map,
+with typing intact (§19.3, measured with a virtual-pointer click) — and that
+is one word in Omarchy's file, so it lives in a clone (`menu-clone/`) with
+upstream draft D asking for it at the source.
+
 ### Why it uploads the system keymap instead of inventing one
 
 This is the decision the whole component turns on, and three things fall out of

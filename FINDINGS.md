@@ -2549,3 +2549,52 @@ line per fold change and per open, in the lock service's own voice. Rendered
 in the harness: keypad up with the mode faked to `tablet`, stock view with
 `laptop`. Whether a touch reaches the keypad under `ext-session-lock` is
 still a hands-on question; the log will now say whether the fold arrived.
+
+### 19.3 Both, fixed and measured with a pointer instead of a finger
+
+Hyprland advertises `zwlr_virtual_pointer_v1`, so a 60-line client
+(`create_virtual_pointer_with_output` on eDP-1, `motion_absolute`, one
+`BTN_LEFT` press and release) can put a click exactly where a finger would
+go, and a click takes the same `refocus()` path through `mouseMoveUnified()`
+that a touch does. The `a` key sits at (296, 602) on the 1200x750 panel with
+the keyboard at 178,412 845x338.
+
+**The failure, reproduced.** Folded, the stock (exclusive) menu summoned,
+the keyboard shown for it, one click on `a`:
+
+    openlayer>>omarchy-menu
+    openlayer>>fw12tab-osk
+    closelayer>>omarchy-menu          <- the click
+    closelayer>>fw12tab-osk           <- the keyboard follows, 300 ms later
+
+**The fix, measured.** `omarchy plugin clone omarchy.menu`, one word in the
+clone (`WlrKeyboardFocus.OnDemand`), `omarchy-restart-shell`. Same fold,
+same menu route, clicks on `a` then `s`, then one on the scrim at (100, 380):
+
+    after a, s:   menu open, keyboard visible, no closelayer
+    screenshot:   the card's header reads "as", rows filtered to 1Password, Basecamp, JavaScript, Password
+    after scrim:  closelayer>>omarchy-menu, keyboard hidden 300 ms later
+
+So a click on the keyboard types into the menu and a click beside it still
+dismisses the menu, which is the whole contract. The clone is mirrored in
+`menu-clone/` as a verbatim commit plus the one-word commit.
+
+**The lock screen was never running the new code.** The shell process had
+started at 10:36:21, before the clone at 10:45 and every edit after it. A
+saved plugin file is hot-reloaded, but Qt caches compiled components by URL
+and the already-loaded `LockView` kept its stock code — §3.1i, again, and it
+cost two test rounds. After `omarchy-restart-shell`, the live clone's view
+in `omarchy-shell lock preview` under a simulated fold logged
+
+    gimbal lock: folded=true inputEnabled=false
+    gimbal lock: keypadOpen=true
+
+and drew the keypad; on unfold, `folded=false`, `keypadOpen=false`. Both
+READMEs now say the restart is not optional.
+
+**The overlap for upstream draft A**, measured on the way: with the keyboard
+hidden the root menu card spans y 85..665 on the 750-tall panel (bright rows
+at the centre column of a `grim -s 1` capture). The keyboard's top edge is at
+y 412, so 253 px of a 580 px card sit under it — the keyboard covers the
+card's last rows, and with the keyboard up the row "Password" is cut in half
+by it.

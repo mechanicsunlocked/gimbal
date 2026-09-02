@@ -102,12 +102,14 @@ Hyprland routes every pointer and touch event to layer surfaces with
 menu is one. The finger lands on the menu's scrim, which cancels it
 (FINDINGS 19.1, with the compositor source).
 
-**Status.** Not fixable from this side; the fix is one word in Omarchy's
-`Menu.qml`, `WlrKeyboardFocus.OnDemand`, which keeps focus on map and typing
-intact (measured). Upstream draft D asks for it. Until then, a clone
-(`omarchy plugin clone omarchy.menu`, then that one word) is the local
-version, and whether to run one is the machine owner's call. Keys sent
-without a touch — a Bluetooth keyboard — reach the menu fine.
+**Status.** Fixed on this machine with a clone of the menu that differs by
+one word, `WlrKeyboardFocus.OnDemand` (`menu-clone/`), which keeps focus on
+map and typing intact — measured with a virtual-pointer click on the `a`
+key: typed, menu stayed; a click on the scrim still closed it (FINDINGS
+19.3). It cannot be fixed from the plugin; upstream draft D asks for the
+word at the source, and the clone goes away when it lands. Without the clone,
+keys sent without a touch — a Bluetooth keyboard — reach the menu fine, and
+a finger does not.
 
 ### fcitx5 can be left with no user interface
 
@@ -124,6 +126,17 @@ every time. A `SIGKILL` skips it.
 **If it happens.** `systemctl --user restart omarchy-fcitx5.service`.
 Check with `gdbus call --session --dest org.fcitx.Fcitx5 --object-path
 /controller --method org.fcitx.Fcitx.Controller1.CurrentUI`.
+
+### An edited clone keeps running the old code until the shell restarts
+
+**What you see.** You change a file in `~/.config/omarchy/plugins/<you>.lock`
+or `<you>.menu`, the shell logs that it reloaded, and nothing changes.
+
+**Why.** Qt caches compiled components by URL, and a component that was
+already loaded is served from that cache; `rescanPlugins` does not clear it
+(FINDINGS 3.1i, and 19.3 where it cost two rounds of testing).
+
+**If it happens.** `omarchy-restart-shell`. Both clone READMEs say so.
 
 ### The layout is read when the shell starts
 

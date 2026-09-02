@@ -18,12 +18,16 @@ into them with.
 
 ## Measurement
 
-_(filled in at the hands-on checkpoint: with the keyboard up in landscape,
-open Setup › Plugins and record where the card's bottom edge sits relative
-to the keyboard's top edge, in logical pixels; the keyboard occupies
-y 412..750 on the 1200x750 panel, top edge at 412.)_
+Framework Laptop 12, 1920x1200 at scale 1.6 (1200x750 logical), landscape.
+The keyboard is a bottom-anchored layer surface at y 412..750 with an
+exclusive zone of its height. The root menu, with the keyboard hidden, spans
+y 85..665 (bright rows at the centre column of a `grim -s 1` capture, the
+card's top and bottom borders):
 
-    card bottom: ___ px      keyboard top: 412 px      overlap: ___ px
+    card bottom: 665 px      keyboard top: 412 px      overlap: 253 px of a 580 px card
+
+With the keyboard up, the card's last visible row ("Password") is cut in
+half by the keyboard's top edge, and everything below it is unreachable.
 
 ## Expected
 
