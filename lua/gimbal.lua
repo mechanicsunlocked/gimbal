@@ -79,9 +79,10 @@ local LAPTOP_FOLLOW_MOUSE = 1 -- Omarchy's default; change here if yours differs
 -- by hand when something looks wrong.
 local MODE_PATH = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/gimbal-mode"
 
--- Written by the shell plugin, which owns the keyboard: "1" while it is up.
--- Read rather than pushed because the plugin already publishes it for the bar
--- button, and one more reader of an existing file beats a second channel.
+-- Written by the keyboard daemon from its own map and unmap: "visible" while
+-- it is on screen, "hidden" otherwise. Read rather than pushed because the
+-- daemon already publishes it for the bar icon and the knobs, and one more
+-- reader of an existing file beats a second channel.
 local OSK_PATH = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/gimbal-osk"
 
 -- ---------------------------------------------------------------------------
@@ -209,7 +210,7 @@ end
 -- tick while folded and nothing at all in laptop mode.
 local function apply_follow_mouse()
     local want = LAPTOP_FOLLOW_MOUSE
-    if S.tablet and read_line(OSK_PATH) == "1" then
+    if S.tablet and read_line(OSK_PATH) == "visible" then
         want = TABLET_FOLLOW_MOUSE
     end
     if want == S.follow_mouse then return end

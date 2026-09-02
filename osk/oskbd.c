@@ -10,8 +10,9 @@
  *   cc -O2 -o oskbd oskbd.c virtual-keyboard-unstable-v1-protocol.c \
  *      $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0 xkbcommon) -lm
  *
- * Layout/variant/options come from argv (fw12tab passes the detected layout),
- * else XKB_DEFAULT_* env, else "us".
+ * Layout/variant/options come from argv (the plugin passes the detected
+ * layout), else XKB_DEFAULT_* env, else "us". argv[4] is the swipe gutter and
+ * argv[5] whether to start "shown" or hidden; see "Lifetime and visibility".
  */
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
@@ -19,6 +20,9 @@
 #include <gdk/wayland/gdkwayland.h>
 #include <gio/gio.h>
 #include <gio/gunixsocketaddress.h>
+#include <glib-unix.h>
+#include <signal.h>
+#include <sys/prctl.h>
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 #include "virtual-keyboard-unstable-v1-client-protocol.h"
@@ -455,6 +459,57 @@ static GtkWidget *g_win, *g_fixed;
 static GtkCssProvider *g_css;
 static int g_gutter;   /* swipe gutter reserved on each side, in logical px */
 
+/* ---------------------------------------------------------------------------
+ * Lifetime and visibility
+ *
+ * The keyboard is a resident process for as long as the machine is folded:
+ * the plugin starts it on fold and kills it on unfold, so laptop mode carries
+ * no resident cost, and showing or hiding it is a map or an unmap of a surface
+ * that is already built -- never a process spawn. That is what makes it
+ * instant, and it is what an auto-show driven by fcitx5 needs, since the show
+ * has to arrive at something already running.
+ *
+ *   SIGUSR1   show (map)
+ *   SIGUSR2   hide (unmap)
+ *   SIGTERM   leave cleanly, releasing every modifier
+ *
+ * argv[5] says how to start: "shown" maps at once; anything else waits for a
+ * SIGUSR1. Hidden is the default because the fold starts it and nothing has
+ * asked for a keyboard yet.
+ *
+ * Whether it is on screen is published to $XDG_RUNTIME_DIR/gimbal-osk as one
+ * word, `visible` or `hidden`, written from the window's own map and unmap so
+ * it is the truth of the surface and not the last request. The bar icon, the
+ * knobs and the Lua's follow_mouse all read it; this process is the only
+ * writer. g_file_set_contents renames a complete file into place, so no
+ * reader sees a half-written word, and the Quickshell FileView watchers
+ * survive the rename (measured, four writes in a row, all seen).
+ * ------------------------------------------------------------------------ */
+static char *g_state_path;
+
+static void write_state(const char *word) {
+  if (!g_state_path) return;
+  GError *err = NULL;
+  if (!g_file_set_contents(g_state_path, word, -1, &err)) {
+    g_warning("fw12-oskbd: cannot write %s: %s", g_state_path, err->message);
+    g_error_free(err);
+  }
+}
+static void on_map(GtkWidget *w, gpointer u)   { (void)w; (void)u; write_state("visible"); }
+static void on_unmap(GtkWidget *w, gpointer u) { (void)w; (void)u; write_state("hidden"); }
+
+static void show_board(void) {
+  if (g_win) gtk_window_present(GTK_WINDOW(g_win));
+}
+static void hide_board(void) {
+  if (!g_win || !gtk_widget_get_visible(g_win)) return;
+  release_all();   /* nothing stays down or latched on a keyboard that is not there */
+  gtk_widget_set_visible(g_win, FALSE);
+}
+static gboolean on_sigusr1(gpointer u) { (void)u; show_board(); return G_SOURCE_CONTINUE; }
+static gboolean on_sigusr2(gpointer u) { (void)u; hide_board(); return G_SOURCE_CONTINUE; }
+static gboolean on_sigterm(gpointer u) { g_application_quit(G_APPLICATION(u)); return G_SOURCE_CONTINUE; }
+
 /* Which monitor the keyboard belongs on: the internal panel, found by
  * connector name, and the first monitor only when there is no eDP at all.
  * The knobs pick their screen the same way.
@@ -669,12 +724,17 @@ static void hypr_subscribe(void) {
 
 static void on_activate(GtkApplication *app, gpointer u) {
   char **argv = u;
-  const char *layout  = argv[1] && *argv[1] ? argv[1] : (g_getenv("XKB_DEFAULT_LAYOUT") ?: "us");
-  const char *variant = argv[2] ? argv[2] : "";
-  const char *options = argv[3] ? argv[3] : "";
+  int argn = 0;
+  while (argv[argn]) argn++;
+  const char *layout  = argn > 1 && *argv[1] ? argv[1] : (g_getenv("XKB_DEFAULT_LAYOUT") ?: "us");
+  const char *variant = argn > 2 ? argv[2] : "";
+  const char *options = argn > 3 ? argv[3] : "";
   /* argv[4]: swipe gutter width, passed by the plugin so the two agree. */
-  g_gutter = (argv[3] && argv[4] && *argv[4]) ? atoi(argv[4]) : 30;
+  g_gutter = (argn > 4 && *argv[4]) ? atoi(argv[4]) : 30;
   if (g_gutter < 0 || g_gutter > 200) g_gutter = 30;
+  gboolean start_shown = argn > 5 && g_str_equal(argv[5], "shown");
+
+  g_state_path = g_strdup_printf("%s/gimbal-osk", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
 
   /* The Ctrl caps are the only fixed labels that are language-specific: a
    * German board says Strg, everyone else says Ctrl. Every other derived key
@@ -798,17 +858,37 @@ static void on_activate(GtkApplication *app, gpointer u) {
   }
   apply_geometry();
   hypr_subscribe();
-  gtk_window_present(GTK_WINDOW(win));
+
+  g_signal_connect(win, "map", G_CALLBACK(on_map), NULL);
+  g_signal_connect(win, "unmap", G_CALLBACK(on_unmap), NULL);
+  g_unix_signal_add(SIGUSR1, on_sigusr1, NULL);
+  g_unix_signal_add(SIGUSR2, on_sigusr2, NULL);
+  g_unix_signal_add(SIGTERM, on_sigterm, app);
+  g_unix_signal_add(SIGINT, on_sigterm, app);
+  /* A hidden window still counts as a window, so the application would stay
+   * up anyway; the hold says so explicitly rather than by accident. */
+  g_application_hold(G_APPLICATION(app));
+
+  if (start_shown) show_board();
+  else write_state("hidden");   /* no unmap ever fires for a window never mapped */
 }
 
-/* Clear any latched modifiers on exit so nothing sticks in the compositor. */
+/* Clear any latched modifiers on exit so nothing sticks in the compositor,
+ * and say so in the state file: the unmap that comes with destroying the
+ * window writes the same word, but a reader is owed it either way. */
 static void on_shutdown(GApplication *app, gpointer u) {
   (void)app;(void)u;
   if (vkbd) { one_shot = 0; locks = 0; send_mods(); if (wl_dpy) wl_display_flush(wl_dpy); }
+  write_state("hidden");
 }
 
 int main(int argc, char **argv) {
   (void)argc;
+  /* The plugin that started this is its owner. If the shell restarts, or is
+   * killed, an orphaned keyboard would outlive it and the fresh shell would
+   * start a second one -- two processes, one bus name, one confused bar icon.
+   * Die with the parent instead. */
+  prctl(PR_SET_PDEATHSIG, SIGTERM);
   GtkApplication *app = gtk_application_new("org.fw12.osk", G_APPLICATION_NON_UNIQUE);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), argv);
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);

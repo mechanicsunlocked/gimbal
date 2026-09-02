@@ -163,11 +163,12 @@ Panel {
         onLoadFailed: root.tabletState = ""
     }
 
-    // Panel.qml owns the keyboard and writes a byte here when it comes and
-    // goes. Watching a file rather than reaching into the shell's map of
-    // loaded panels keeps the dependency between the two halves down to one
-    // path, and the button lights up the moment the keyboard does however it
-    // was summoned -- bar, swipe or SUPER+B.
+    // The keyboard daemon writes one word here, `visible` or `hidden`, from
+    // its own map and unmap. Watching a file rather than reaching into the
+    // shell's map of loaded panels keeps the dependency between the two
+    // halves down to one path, and the button lights up the moment the
+    // keyboard does however it was summoned -- bar, knob, SUPER+B, or a text
+    // field taking focus.
     FileView {
         id: oskStateFile
 
@@ -176,7 +177,7 @@ Panel {
         printErrors: false
 
         onFileChanged: reload()
-        onLoaded: root.keyboardShown = text().trim() === "1"
+        onLoaded: root.keyboardShown = text().trim() === "visible"
         onLoadFailed: root.keyboardShown = false
     }
 

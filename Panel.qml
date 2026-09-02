@@ -14,9 +14,13 @@
 // one. It is also why AltGr and dead keys work, which is what an international
 // layout needs.
 //
-// Showing and hiding it is just running and not running it: the binary is
-// 38 KB and starts instantly, so there is no daemon to keep alive, no DBus
-// call to get wrong, and nothing left behind when the shell exits.
+// While the machine is folded the keyboard is a resident process, started on
+// fold and killed on unfold, and showing or hiding it is a signal that maps or
+// unmaps a surface it has already built: no process spawn on the path a finger
+// is waiting on, and something already running for fcitx5's auto-show to
+// arrive at. Laptop mode keeps the old arrangement -- SUPER+B starts it
+// showing and it lives exactly as long as it is on screen -- so an unfolded
+// machine carries nothing resident.
 
 import QtQuick
 import QtQuick.Shapes
@@ -140,30 +144,66 @@ Item {
     // -----------------------------------------------------------------------
     // Keyboard
     //
-    // The keyboard is shown exactly when its process is running, so there is
-    // one piece of state and it is the true one: no flag that can disagree
-    // with reality if the keyboard dies, and nothing to reconcile after a
-    // failed call. If it crashes, the button goes dim and the next tap starts
-    // it again.
+    // The daemon is resident for exactly as long as the machine is folded --
+    // the same condition that puts the knobs on screen, so a knob is never
+    // there with nothing behind it -- and is shown or hidden by signal:
+    // SIGUSR1 maps, SIGUSR2 unmaps. It publishes whether it is on screen to a
+    // one-word file, `visible` or `hidden`, written from its own map and
+    // unmap, so what is read here is the truth of the surface rather than the
+    // last request: if it dies, the word goes to `hidden` and the next tap
+    // starts it again. The bar widget and the Lua's follow_mouse read the
+    // same file. One writer, three readers, no polling.
+    //
+    // Resident waits for the mode file to have been read once. Before that
+    // the knobs already fail visible, which costs a surface for a moment; a
+    // daemon started and killed on every shell start in laptop mode would
+    // cost a process.
     // -----------------------------------------------------------------------
-    readonly property bool keyboardShown: keyboard.running
+    property bool modeKnown: false
+    readonly property bool resident: root.modeKnown && root.showButton
+    property bool keyboardShown: false
 
-    // Whether the keyboard is out is also written to a one-byte file, because
-    // the bar widget lives in a different plugin instance and a file it can
-    // watch is a smaller thing to depend on than the shell's private map of
-    // loaded panels. One writer, one reader, no polling.
-    onKeyboardShownChanged: oskStateFile.setText(root.keyboardShown ? "1" : "0")
+    // Linux signal numbers; Process.signal() takes the integer.
+    readonly property int sigShow: 10   // SIGUSR1
+    readonly property int sigHide: 12   // SIGUSR2
 
     FileView {
         id: oskStateFile
 
         path: root.oskStatePath
+        watchChanges: true
         printErrors: false
 
-        // A stale "1" from a session that ended with the keyboard out would
-        // light the bar button up over nothing, so state is stated once at
-        // startup rather than only on change.
-        Component.onCompleted: oskStateFile.setText(root.keyboardShown ? "1" : "0")
+        onFileChanged: reload()
+        onLoaded: root.keyboardShown = text().trim() === "visible"
+        onLoadFailed: root.keyboardShown = false
+    }
+
+    function startDaemon(shown) {
+        // Positional: layout, variant, options, the gutter to keep clear,
+        // and how to start. Set right before each start because the last
+        // argument depends on who is asking.
+        keyboard.command = ["fw12-oskbd", root.kbLayout || "us", root.kbVariant, "", "0", shown ? "shown" : "hidden"];
+        keyboard.running = true;
+    }
+
+    // Fold starts it hidden. Unfold kills it, on screen or not: a keyboard
+    // left up would strand its exclusive zone with no knob left to dismiss
+    // it. Laptop mode never starts one here; see requestKeyboard.
+    function syncDaemon() {
+        if (root.resident && !keyboard.running)
+            root.startDaemon(false);
+        else if (!root.resident && keyboard.running)
+            keyboard.running = false;
+    }
+    onResidentChanged: syncDaemon()
+
+    Component.onCompleted: {
+        // A stale `visible` from a session that ended with the keyboard out
+        // would light the bar icon over nothing. The daemon rewrites the
+        // word the moment it starts, but in laptop mode nothing starts.
+        oskStateFile.setText("hidden");
+        root.syncDaemon();
     }
 
     // -----------------------------------------------------------------------
@@ -229,13 +269,28 @@ Item {
     // A game that starts while the keyboard is out takes the screen back.
     onKeyboardBlockedChanged: {
         if (root.keyboardBlocked)
-            keyboard.running = false;
+            root.requestKeyboard(false);
     }
 
     function requestKeyboard(on) {
         if (on && root.keyboardBlocked)
             return;
-        keyboard.running = on;
+        if (root.resident) {
+            if (keyboard.running)
+                keyboard.signal(on ? root.sigShow : root.sigHide);
+            else if (on)
+                root.startDaemon(true);   // it died; this tap brings it back, showing
+            return;
+        }
+        // Laptop mode. SUPER+B works here too, and the keyboard lives exactly
+        // as long as it is on screen, so an unfolded machine carries nothing
+        // resident.
+        if (!on)
+            keyboard.running = false;
+        else if (keyboard.running)
+            keyboard.signal(root.sigShow);
+        else
+            root.startDaemon(true);
     }
 
     // Reachable from a keybind as
@@ -292,25 +347,20 @@ Item {
     Process {
         id: keyboard
 
-        // Positional: layout, variant, options, and the gutter to keep clear.
-        // Nothing to keep clear any more: with the edge strips gone the
-        // keyboard has the full width of the screen, which is worth the most
-        // in portrait where the key pitch is tightest.
-        command: ["fw12-oskbd", root.kbLayout || "us", root.kbVariant, "", "0"]
+        // The gutter is 0: with the edge strips gone the keyboard has the
+        // full width of the screen, which is worth the most in portrait where
+        // the key pitch is tightest. The real command is set by startDaemon().
+        command: ["fw12-oskbd", root.kbLayout || "us", root.kbVariant, "", "0", "hidden"]
         running: false
 
         onExited: function (exitCode) {
             if (exitCode !== 0)
                 console.warn("gimbal: fw12-oskbd exited " + exitCode);
+            // Its own unmap wrote `hidden` if it left cleanly. A crash did
+            // not, and a stale `visible` would hold follow_mouse and light
+            // the bar icon over nothing.
+            oskStateFile.setText("hidden");
         }
-    }
-
-    // Unfolding back into a laptop puts the keyboard away. Leaving it up would
-    // strand its exclusive zone at the bottom of the screen with no button
-    // left on screen to dismiss it.
-    onShowButtonChanged: {
-        if (!showButton)
-            requestKeyboard(false);
     }
 
     // -----------------------------------------------------------------------
@@ -326,8 +376,14 @@ Item {
         // text() is stale inside the change signal itself, so both the first
         // load and every later change are routed through reload -> onLoaded.
         onFileChanged: reload()
-        onLoaded: root.tabletState = text().trim()
-        onLoadFailed: root.tabletState = ""
+        onLoaded: {
+            root.tabletState = text().trim();
+            root.modeKnown = true;
+        }
+        onLoadFailed: {
+            root.tabletState = "";
+            root.modeKnown = true;
+        }
     }
 
     FileView {
