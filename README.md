@@ -71,6 +71,9 @@ it away:
 A keyboard you called yourself stays until you put it away. One that came up
 by itself goes away by itself.
 
+It is half-transparent and sits over your windows rather than pushing them
+up, so it costs less of the screen; both are settings.
+
 It is laid out like the Laptop 12's own keyboard, so your hands already know
 it: function row under `fn`, real `ctrl` / `alt` / `alt gr`, the Framework
 key as Super, a proper arrow cluster. Tap a modifier once for the next key,
@@ -112,7 +115,7 @@ indicator that opens the settings.
 | Setting | What it does |
 |---|---|
 | **Interaction** | each knob on or off |
-| **Keyboard** | whether it appears by itself for a text field or the menu |
+| **Keyboard** | whether it appears by itself; how solid it is; whether it pushes windows up or covers them |
 | **Gestures** | the command each knob drag runs |
 | **Gaming** | hold the keyboard and the menu back while a Moonlight stream is on screen |
 
@@ -201,6 +204,8 @@ also go in this plugin's entry in `~/.config/omarchy/shell.json`; values in
   "swipeRight": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r-1\" })'",
   "swipeThreshold": 30,
   "autoShow": true,
+  "keyboardOpacity": 0.5,
+  "keyboardReservesSpace": false,
   "blockOnMoonlight": true
 }
 ```

@@ -60,6 +60,11 @@ the part most likely to feel wrong.
 - [ ] Swipe up from a knob opens the keyboard.
 - [ ] **Press and hold for half a second unlocks.** The accent ring appears.
 - [ ] Drag the unlocked knob. It tracks your finger without jumping.
+- [ ] Lift, then tap the unlocked knob: nothing should happen, but a hold on
+      it must lock it, and a tap after that must toggle the keyboard. (An
+      unlocked knob used to be deaf until the shell restarted.)
+- [ ] In the settings, drag "Solid": the keyboard changes under your thumb.
+      Turn "Push windows up" on: windows shrink above it; off: it floats.
 - [ ] Drag it to each of the four screen edges and press-and-hold to lock there.
       Check it sits sensibly at each, in both orientations.
 - [ ] While a knob is unlocked, confirm the rest of the screen still works

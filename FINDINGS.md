@@ -2758,3 +2758,55 @@ by `SUPER+B` while a typed overlay is open hands focus to the window behind
 (Hyprland's `refocusLastWindow` skips on-demand layers), and a clone does
 not follow Omarchy updates to the file it changed until `install.sh` runs
 again.
+
+---
+
+## 21. Second hands-on round (2026-09-02, afternoon)
+
+### 21.1 "Tapping the knob beside the keyboard does nothing; hold-to-move works"
+
+Reproduced with the virtual pointer at the knob's real position (its saved
+fraction put it at x 1109..1165, y 275..331, in the free column right of the
+letterboxed board). Locked, a tap toggled the keyboard every time and the
+handler logged `tapped`. A hold unlocked it, the surface went full screen —
+and from then on nothing arrived: tap, hold, nothing logged, until the shell
+restarted. That is the report exactly: the hold that starts a move is the
+last gesture the knob ever hears, because the drag that follows rides the
+same touch; the next finger finds a deaf knob.
+
+The cause was the input mask. `mask: Region { item: pad }` was not
+re-evaluated when the window itself grew from 101x101 to full screen on
+unlock, so the mask stayed where the knob had been *inside the small window*
+— its top-left corner. Bound to the knob's numbers instead
+(`x: pad.x; y: pad.y; width; height`), the mask follows. Logged at the moment
+of unlocking: `pad=1109.6,275.2 mask=1109,275 56x56`; a click on the knob
+while loose then logged `tapped loose=true`, a click at (50,50) logged
+nothing, and one hold locked it back.
+
+The pointer is not a finger: it read two of five 900 ms holds as drags and
+one as a plain press, apparently on the pointer's enter-then-press. A finger
+holds still.
+
+### 21.2 A translucent board that floats
+
+Two settings, `keyboardOpacity` (default 0.5) and `keyboardReservesSpace`
+(default false), reach the daemon as one runtime word pair
+(`$XDG_RUNTIME_DIR/gimbal-look`, `opacity=0.50 reserve=0`) that it watches
+with inotify, so the settings-panel slider changes the board live. Opacity
+scales the window and key backgrounds; legends stay opaque. With `reserve=0`
+the exclusive zone is 0 and the board sits over the windows: measured,
+eDP-1's reserved area with the board up is `0,26,0,0` — the bar only — and a
+screenshot shows the page under the keys readable through them.
+
+### 21.3 The marketplace
+
+The first submission failed validation: "one plugin with manifest.json in
+the repository root". The two clone directories each carried a copy of the
+manifest `omarchy plugin clone` writes, and the validator counted three.
+Removed; the retry passed (one manifest, README, licence, Quattro
+compatibility at `ec26419`, preview detected). The security baseline came
+back `review-required`, as predicted: `privilege` for the `sudo` mentions
+(the optional boot fix and printed hints), `installer`, `package-manager`
+for the printed `pacman` line, `service-management` for the boot-fix unit
+and the `systemctl --user show-environment` read. No finding. A maintainer
+decides from here.

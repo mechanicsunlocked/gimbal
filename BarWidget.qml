@@ -108,7 +108,9 @@ Panel {
             "swipeRight": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r-1\" })'",
             "swipeLeft": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r+1\" })'",
             "blockOnMoonlight": true,
-            "autoShow": true
+            "autoShow": true,
+            "keyboardOpacity": 0.5,
+            "keyboardReservesSpace": false
         })
 
     readonly property var gestures: [
@@ -520,6 +522,71 @@ Panel {
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
+                }
+
+                // How solid the board is. Live: the daemon watches the word
+                // the slider writes, so the board changes under the thumb.
+                Item {
+                    width: parent.width
+                    implicitHeight: opacityLabel.implicitHeight
+
+                    Text {
+                        id: opacityLabel
+
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Solid"
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Math.round(Number(root.value("keyboardOpacity")) * 100) + " %"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+                }
+
+                PanelSlider {
+                    bar: root.bar
+                    width: parent.width
+                    minimum: 0.15
+                    maximum: 1
+                    step: 0.05
+                    value: Number(root.value("keyboardOpacity"))
+                    onMoved: function (v) {
+                        root.setValue("keyboardOpacity", Math.round(v * 20) / 20);
+                    }
+                }
+
+                Item {
+                    width: parent.width
+                    implicitHeight: reserveLabel.implicitHeight
+
+                    Text {
+                        id: reserveLabel
+
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Push windows up instead of covering them"
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    ToggleSwitch {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: reserveLabel.verticalCenter
+                        trackHeight: Math.round(reserveLabel.font.pixelSize * 1.2)
+                        cursorPad: Style.space(3)
+                        foreground: root.foreground
+                        checked: root.value("keyboardReservesSpace") === true
+                        onToggled: root.setValue("keyboardReservesSpace", !(root.value("keyboardReservesSpace") === true))
+                    }
                 }
 
                 PanelSeparator {

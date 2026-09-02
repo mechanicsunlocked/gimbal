@@ -59,6 +59,7 @@ Item {
     readonly property string modePath: runtimeDir + "/gimbal-mode"
     readonly property string oskStatePath: runtimeDir + "/gimbal-osk"
     readonly property string autoShowPath: runtimeDir + "/gimbal-autoshow"
+    readonly property string lookPath: runtimeDir + "/gimbal-look"
     readonly property string padPath: home + "/.local/state/omarchy/gimbal-pads.json"
     readonly property string userConfigPath: home + "/.config/omarchy/gimbal.json"
 
@@ -313,6 +314,33 @@ Item {
         printErrors: false
 
         Component.onCompleted: autoShowFile.setText(root.autoShowAllowed ? "on" : "off")
+    }
+
+    // -----------------------------------------------------------------------
+    // How the keyboard looks
+    //
+    // Half-transparent and floating over the windows by default: a solid board
+    // that pushes every window up took a third of the screen for itself, and
+    // a board you can read through does not have to. Both knobs live in the
+    // settings and reach the daemon through one runtime word pair it watches
+    // with inotify, so a slider changes the board live.
+    // -----------------------------------------------------------------------
+    readonly property real keyboardOpacity: {
+        var v = Number(root.opt("keyboardOpacity", 0.5));
+        return isNaN(v) ? 0.5 : Math.max(0.15, Math.min(1, v));
+    }
+    readonly property bool keyboardReservesSpace: root.opt("keyboardReservesSpace", false) === true
+    readonly property string lookWord: "opacity=" + root.keyboardOpacity.toFixed(2) + " reserve=" + (root.keyboardReservesSpace ? "1" : "0")
+
+    onLookWordChanged: lookFile.setText(root.lookWord)
+
+    FileView {
+        id: lookFile
+
+        path: root.lookPath
+        printErrors: false
+
+        Component.onCompleted: lookFile.setText(root.lookWord)
     }
 
     // A game that starts while the keyboard is out takes the screen back.
@@ -798,8 +826,18 @@ Item {
             exclusionMode: ExclusionMode.Ignore
             exclusiveZone: 0
 
+            // Bound to the knob's numbers, not to the knob item. `Region {
+            // item: pad }` was not re-evaluated when the window itself grew to
+            // full screen on unlock, so the input mask stayed where the knob
+            // had been in the small window -- the top-left corner -- and an
+            // unlocked knob took no touch at all: no tap, no hold to lock it
+            // back, until the shell restarted (measured with a pointer, and
+            // with the gesture handlers logging: nothing arrived).
             mask: Region {
-                item: pad
+                x: pad.x
+                y: pad.y
+                width: pad.width
+                height: pad.height
             }
 
             // See restackPads(). Two steps because Hyprland only moves a

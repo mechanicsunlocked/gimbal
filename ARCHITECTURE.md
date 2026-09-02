@@ -126,6 +126,11 @@ that one file. `g_file_set_contents` renames a complete file into place, and
 the Quickshell watchers survive the rename (§16.1). It dies with its parent
 (`PR_SET_PDEATHSIG`), so a shell restart cannot leave a second one behind.
 
+It is half-transparent and floats over the windows by default (§21.2): the
+opacity and whether it reserves its strip are two settings the plugin writes
+to one runtime word pair the daemon watches, so a slider changes the board
+live and nothing polls. Legends stay opaque at any opacity.
+
 Laptop mode keeps the old shape: `SUPER + B` starts it showing and it lives
 exactly as long as it is on screen. Measured in §16.3: exactly one process
 through any number of toggles, the state file and `follow_mouse` tracking
