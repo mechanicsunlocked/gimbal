@@ -1,11 +1,13 @@
-// A draggable button that shows and hides the on-screen keyboard.
+// Two draggable knobs that show and hide the on-screen keyboard, and the
+// policy for when it may show by itself.
 //
-// Why a button and not automatic pop-up: fcitx5 holds Hyprland's single
-// input-method-v2 slot (measured -- Hyprland answers a second client with
-// `unavailable`, see FINDINGS.md 8.1), so no on-screen keyboard here can see
-// which text field has focus. Something has to decide when to show it, and a
-// button the user moves where they want is the version with nothing in it to
-// go wrong. fcitx5 is not touched, stopped, or reconfigured.
+// fcitx5 holds Hyprland's single input-method-v2 slot (measured -- Hyprland
+// answers a second client with `unavailable`, FINDINGS.md 8.1 and 15.1), so
+// no on-screen keyboard here can see which text field has focus. fcitx5 can,
+// and it will tell a virtual keyboard registered with it over D-Bus; the
+// daemon is that keyboard while the machine is folded. fcitx5 is not
+// configured, stopped or replaced for it. The knobs stay, because some
+// things a keyboard is wanted for are not text fields.
 //
 // The keyboard is `fw12-oskbd` (see ../osk/). It uploads the system's own xkb
 // keymap, so its keys arrive with the same keycodes as the built-in keyboard's
@@ -56,6 +58,7 @@ Item {
     readonly property string home: Quickshell.env("HOME") || ""
     readonly property string modePath: runtimeDir + "/gimbal-mode"
     readonly property string oskStatePath: runtimeDir + "/gimbal-osk"
+    readonly property string autoShowPath: runtimeDir + "/gimbal-autoshow"
     readonly property string padPath: home + "/.local/state/omarchy/gimbal-pads.json"
     readonly property string userConfigPath: home + "/.config/omarchy/gimbal.json"
 
@@ -265,6 +268,31 @@ Item {
     // available, because leaving is the thing you still want.
     readonly property bool interruptionsBlocked: root.blockOnMoonlight && root.moonlightFocused
     readonly property bool keyboardBlocked: root.interruptionsBlocked
+
+    // -----------------------------------------------------------------------
+    // Appearing by itself
+    //
+    // The daemon shows the keyboard when fcitx5 reports a text field taking
+    // focus, and when the Omarchy menu opens, and hides it again when they
+    // go. Whether it may is policy, and policy lives here: the `autoShow`
+    // setting, and the Moonlight hold-back, which has to stop an automatic
+    // show as surely as it stops a knob. The daemon reads one word from a
+    // runtime file on every such event, so a change takes effect at once and
+    // nothing polls. Written whenever the answer changes, and once at start.
+    // -----------------------------------------------------------------------
+    readonly property bool autoShow: root.opt("autoShow", true) === true
+    readonly property bool autoShowAllowed: root.autoShow && !root.interruptionsBlocked
+
+    onAutoShowAllowedChanged: autoShowFile.setText(root.autoShowAllowed ? "on" : "off")
+
+    FileView {
+        id: autoShowFile
+
+        path: root.autoShowPath
+        printErrors: false
+
+        Component.onCompleted: autoShowFile.setText(root.autoShowAllowed ? "on" : "off")
+    }
 
     // A game that starts while the keyboard is out takes the screen back.
     onKeyboardBlockedChanged: {

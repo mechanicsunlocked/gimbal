@@ -13,6 +13,9 @@
  * Layout/variant/options come from argv (the plugin passes the detected
  * layout), else XKB_DEFAULT_* env, else "us". argv[4] is the swipe gutter and
  * argv[5] whether to start "shown" or hidden; see "Lifetime and visibility".
+ *
+ * While folded it is also fcitx5's virtual keyboard over D-Bus, which is how
+ * it appears when a text field takes focus; see "Appearing by itself".
  */
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
@@ -219,8 +222,10 @@ static struct xkb_keymap *upload_keymap(const char *layout, const char *variant,
 static void send_mods(void) {
   if (vkbd) zwp_virtual_keyboard_v1_modifiers(vkbd, one_shot | locks, 0, locks, 0);
 }
+static gint64 last_key_us;   /* our last injected key: fcitx5's hide-on-key grace window */
 static void send_key(uint32_t code, uint32_t state) {
   if (vkbd) zwp_virtual_keyboard_v1_key(vkbd, evtime++, code, state);
+  last_key_us = g_get_monotonic_time();
 }
 
 /* ---- label resolution from the keymap ---- */
@@ -484,8 +489,21 @@ static int g_gutter;   /* swipe gutter reserved on each side, in logical px */
  * writer. g_file_set_contents renames a complete file into place, so no
  * reader sees a half-written word, and the Quickshell FileView watchers
  * survive the rename (measured, four writes in a row, all seen).
+ *
+ * Who asked for it matters. A keyboard the user summoned stays until the user
+ * puts it away; one that came up by itself -- for a text field, or for the
+ * menu -- goes away by itself. So a show records who asked, and only an
+ * automatic show can be undone automatically.
  * ------------------------------------------------------------------------ */
 static char *g_state_path;
+
+typedef enum { BY_NONE, BY_USER, BY_AUTO } shown_by_t;
+static shown_by_t shown_by;
+static guint hide_timer;   /* a pending automatic hide, see auto_hide_later() */
+
+static void cancel_hide_timer(void) {
+  if (hide_timer) { g_source_remove(hide_timer); hide_timer = 0; }
+}
 
 static void write_state(const char *word) {
   if (!g_state_path) return;
@@ -495,20 +513,43 @@ static void write_state(const char *word) {
     g_error_free(err);
   }
 }
-static void on_map(GtkWidget *w, gpointer u)   { (void)w; (void)u; write_state("visible"); }
+/* Self-test: with FW12_OSKBD_SELFTEST_KEY=<evdev code> in the environment,
+ * the board taps that key through its own press and release path 700 ms after
+ * each map. It exists so the fcitx5 hide-on-key grace window can be measured
+ * by a script rather than by a finger -- a key from any other virtual
+ * keyboard is, correctly, not "ours". The plugin never sets it. */
+static void on_pressed(GtkGestureClick *g, int np, double x, double y, gpointer u);
+static void end_contact(Key *k);
+static gboolean selftest_tap(gpointer u) {
+  uint32_t code = (uint32_t)GPOINTER_TO_UINT(u);
+  for (int i = 0; i < NKEYS; i++)
+    if (keys[i].type == KT_CODE && keys[i].code == code && keys[i].button) {
+      on_pressed(NULL, 1, 0, 0, &keys[i]);
+      end_contact(&keys[i]);
+      break;
+    }
+  return G_SOURCE_REMOVE;
+}
+static void on_map(GtkWidget *w, gpointer u) {
+  (void)w; (void)u;
+  write_state("visible");
+  const char *t = g_getenv("FW12_OSKBD_SELFTEST_KEY");
+  if (t && *t) g_timeout_add(700, selftest_tap, GUINT_TO_POINTER((guint)atoi(t)));
+}
 static void on_unmap(GtkWidget *w, gpointer u) { (void)w; (void)u; write_state("hidden"); }
 
-static void show_board(void) {
+static void show_board(shown_by_t by) {
+  cancel_hide_timer();
+  if (by == BY_USER || shown_by == BY_NONE) shown_by = by;   /* the user outranks the automation */
   if (g_win) gtk_window_present(GTK_WINDOW(g_win));
 }
 static void hide_board(void) {
+  cancel_hide_timer();
+  shown_by = BY_NONE;
   if (!g_win || !gtk_widget_get_visible(g_win)) return;
   release_all();   /* nothing stays down or latched on a keyboard that is not there */
   gtk_widget_set_visible(g_win, FALSE);
 }
-static gboolean on_sigusr1(gpointer u) { (void)u; show_board(); return G_SOURCE_CONTINUE; }
-static gboolean on_sigusr2(gpointer u) { (void)u; hide_board(); return G_SOURCE_CONTINUE; }
-static gboolean on_sigterm(gpointer u) { g_application_quit(G_APPLICATION(u)); return G_SOURCE_CONTINUE; }
 
 /* Which monitor the keyboard belongs on: the internal panel, found by
  * connector name, and the first monitor only when there is no eDP at all.
@@ -679,6 +720,230 @@ static void restack(void) {
   g_timeout_add(40, restack_finish, NULL);
 }
 
+/* ---------------------------------------------------------------------------
+ * Appearing by itself: fcitx5's virtual keyboard backend
+ *
+ * fcitx5 holds the seat's input method and therefore knows exactly when a
+ * text field takes or loses focus. It has an addon, "DBus Virtual Keyboard",
+ * that hands that knowledge to whoever owns the bus name
+ * org.fcitx.Fcitx5.VirtualKeyboard: it calls ShowVirtualKeyboard and
+ * HideVirtualKeyboard on that client's /org/fcitx/virtualkeyboard/impanel.
+ * We own the name, export the object, and map or unmap on those two calls.
+ * The contract is read from fcitx5's own source and measured on this machine
+ * (FINDINGS 15.4 and 17). fcitx5 itself is not configured, stopped or
+ * replaced: the addon is on demand and loads when asked.
+ *
+ * Owning the name is not enough. fcitx5 only switches to the on-screen
+ * keyboard when someone calls ShowVirtualKeyboard on *its* /virtualkeyboard,
+ * and it answers that with a Show of its own -- an echo, not a text field, so
+ * the first Show after each registration is dropped.
+ *
+ * Both directions are gated on two runtime words: gimbal-mode must say
+ * tablet, and gimbal-autoshow, written by the plugin from the autoShow
+ * setting and the Moonlight hold-back, must not say off. Read per event, so
+ * a change takes effect at once and nothing polls.
+ *
+ * The one real fight, measured in FINDINGS 17: fcitx5 hides its keyboard the
+ * moment it sees a key that did not come through its own D-Bus injection --
+ * it takes any such key for a hardware keyboard and switches mode -- and our
+ * keys come through the compositor, so every key we send is one of those.
+ * The first key after a Show produced a Hide within 20 ms, every time. There
+ * is no switch for it. So a Hide arriving within 300 ms of our own key is
+ * ours, is ignored, and is answered by asserting the on-screen mode again; a
+ * real hide needs a tap somewhere else and does not fit in that window.
+ *
+ * Leaving needs care too: releasing the name while fcitx5 is in on-screen
+ * mode leaves it with no user interface at all, and the only thing that puts
+ * the mode back is a hardware-looking key -- so the last act is one key with
+ * no symbol on it (evdev 240, KEY_UNKNOWN), then the name goes. Measured.
+ * ------------------------------------------------------------------------ */
+#define VK_NAME   "org.fcitx.Fcitx5.VirtualKeyboard"
+#define VK_PATH   "/org/fcitx/virtualkeyboard/impanel"
+#define VK_IFACE  "org.fcitx.Fcitx5.VirtualKeyboard1"
+#define GRACE_US  (300 * 1000)
+#define ECHO_US   (500 * 1000)
+
+static const char VK_XML[] =
+  "<node>"
+  " <interface name='" VK_IFACE "'>"
+  "  <method name='ShowVirtualKeyboard'/>"
+  "  <method name='HideVirtualKeyboard'/>"
+  "  <method name='NotifyIMActivated'><arg type='s' name='name' direction='in'/></method>"
+  "  <method name='NotifyIMDeactivated'><arg type='s' name='name' direction='in'/></method>"
+  "  <method name='NotifyIMListChanged'/>"
+  "  <method name='UpdatePreeditArea'><arg type='s' name='text' direction='in'/></method>"
+  "  <method name='UpdatePreeditCaret'><arg type='i' name='caret' direction='in'/></method>"
+  "  <method name='UpdateCandidateArea'>"
+  "   <arg type='as' name='candidates' direction='in'/><arg type='b' name='hasPrev' direction='in'/>"
+  "   <arg type='b' name='hasNext' direction='in'/><arg type='i' name='page' direction='in'/>"
+  "   <arg type='i' name='cursor' direction='in'/></method>"
+  " </interface>"
+  "</node>";
+
+static GDBusConnection *bus;
+static guint    vk_name_id;      /* g_bus_own_name handle; 0 = not connected */
+static guint    fcitx_watch_id;
+static gboolean name_owned;
+static gboolean fcitx_initial_seen;  /* the watcher's first callback is state, not an event */
+static gboolean swallow_one;         /* the next Show is our own registration echoing back */
+static gint64   swallow_until_us;
+static gboolean menu_open;
+static gboolean quitting;   /* the farewell key below provokes a Hide; it must not be answered */
+
+/* One small file, read when it matters: $XDG_RUNTIME_DIR/<name> == word. */
+static gboolean runtime_word_is(const char *name, const char *word) {
+  char *path = g_strdup_printf("%s/%s", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp", name);
+  char *text = NULL;
+  gboolean r = g_file_get_contents(path, &text, NULL, NULL) && g_str_equal(g_strstrip(text), word);
+  g_free(text); g_free(path);
+  return r;
+}
+static gboolean auto_allowed(void) {
+  return runtime_word_is("gimbal-mode", "tablet") && !runtime_word_is("gimbal-autoshow", "off");
+}
+
+/* Tell fcitx5 we are its keyboard. It answers with a Show of its own. */
+static void fcitx_assert(void) {
+  if (!bus || !name_owned) return;
+  swallow_one = TRUE;
+  swallow_until_us = g_get_monotonic_time() + ECHO_US;
+  g_dbus_connection_call(bus, "org.fcitx.Fcitx5", "/virtualkeyboard",
+                         "org.fcitx.Fcitx.VirtualKeyboard1", "ShowVirtualKeyboard",
+                         NULL, NULL, G_DBUS_CALL_FLAGS_NONE, 1000, NULL, NULL, NULL);
+}
+
+static gboolean hide_timer_cb(gpointer u) {
+  (void)u;
+  hide_timer = 0;
+  if (shown_by == BY_AUTO) hide_board();
+  return G_SOURCE_REMOVE;
+}
+/* Focus moving between fields produces a Hide and a Show a few ms apart, and
+ * acting on the Hide at once is visible as flicker (FINDINGS 3.1i). Wait a
+ * moment; any Show in between cancels it. Only an automatic show is undone. */
+static void auto_hide_later(void) {
+  if (shown_by != BY_AUTO || menu_open) return;
+  cancel_hide_timer();
+  hide_timer = g_timeout_add(300, hide_timer_cb, NULL);
+}
+
+static void on_fcitx_show(void) {
+  if (quitting) return;
+  gint64 now = g_get_monotonic_time();
+  if (swallow_one && now < swallow_until_us) { swallow_one = FALSE; return; }
+  swallow_one = FALSE;
+  if (!auto_allowed()) return;
+  show_board(BY_AUTO);
+}
+static void on_fcitx_hide(void) {
+  if (quitting) return;
+  if (g_get_monotonic_time() - last_key_us < GRACE_US) {
+    /* Our own key. fcitx5 took it for a hardware keyboard; put it back. */
+    fcitx_assert();
+    return;
+  }
+  if (!auto_allowed()) return;
+  auto_hide_later();
+}
+
+static void on_method_call(GDBusConnection *c, const gchar *sender, const gchar *path,
+                           const gchar *iface, const gchar *method, GVariant *params,
+                           GDBusMethodInvocation *inv, gpointer u) {
+  (void)c; (void)sender; (void)path; (void)iface; (void)params; (void)u;
+  if (g_str_equal(method, "ShowVirtualKeyboard"))      on_fcitx_show();
+  else if (g_str_equal(method, "HideVirtualKeyboard")) on_fcitx_hide();
+  /* NotifyIM*, UpdatePreedit*, UpdateCandidateArea: a plain Latin layout has
+   * nothing to do with them, but every call still gets its reply. */
+  g_dbus_method_invocation_return_value(inv, NULL);
+}
+static const GDBusInterfaceVTable vk_vtable = { on_method_call, NULL, NULL, { 0 } };
+
+static void on_bus_acquired(GDBusConnection *c, const gchar *name, gpointer u) {
+  (void)name; (void)u;
+  bus = c;
+  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml(VK_XML, NULL);
+  g_dbus_connection_register_object(c, VK_PATH, info->interfaces[0], &vk_vtable, NULL, NULL, NULL);
+  g_dbus_node_info_unref(info);
+}
+static void on_name_acquired(GDBusConnection *c, const gchar *name, gpointer u) {
+  (void)c; (void)name; (void)u;
+  name_owned = TRUE;
+  fcitx_assert();
+}
+static void on_name_lost(GDBusConnection *c, const gchar *name, gpointer u) {
+  (void)c; (void)u;
+  if (name_owned) g_warning("fw12-oskbd: lost %s; another on-screen keyboard took it?", name);
+  name_owned = FALSE;
+}
+/* fcitx5 restarting forgets us while we still hold the name it watches, so
+ * nothing looks wrong from here and auto-show would simply stop. Watch for it
+ * coming back and assert again. The watcher's first callback reports the
+ * state at startup and is not a restart. */
+static void on_fcitx_appeared(GDBusConnection *c, const gchar *name, const gchar *owner, gpointer u) {
+  (void)c; (void)name; (void)owner; (void)u;
+  if (fcitx_initial_seen) fcitx_assert();
+  fcitx_initial_seen = TRUE;
+}
+static void on_fcitx_vanished(GDBusConnection *c, const gchar *name, gpointer u) {
+  (void)c; (void)name; (void)u;
+  fcitx_initial_seen = TRUE;
+}
+
+static void fcitx_connect(void) {
+  if (vk_name_id) return;
+  vk_name_id = g_bus_own_name(G_BUS_TYPE_SESSION, VK_NAME,
+                              G_BUS_NAME_OWNER_FLAGS_REPLACE | G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT,
+                              on_bus_acquired, on_name_acquired, on_name_lost, NULL, NULL);
+  fcitx_watch_id = g_bus_watch_name(G_BUS_TYPE_SESSION, "org.fcitx.Fcitx5", G_BUS_NAME_WATCHER_FLAGS_NONE,
+                                    on_fcitx_appeared, on_fcitx_vanished, NULL, NULL);
+}
+
+/* The last act before quitting: hand fcitx5 its user interface back. */
+static gboolean quit_now(gpointer app) {
+  if (fcitx_watch_id) { g_bus_unwatch_name(fcitx_watch_id); fcitx_watch_id = 0; }
+  if (vk_name_id) { g_bus_unown_name(vk_name_id); vk_name_id = 0; name_owned = FALSE; }
+  g_application_quit(G_APPLICATION(app));
+  return G_SOURCE_REMOVE;
+}
+static gboolean on_sigterm(gpointer app) {
+  quitting = TRUE;
+  if (name_owned && vkbd) {
+    send_key(KEY_UNKNOWN, WL_KEYBOARD_KEY_STATE_PRESSED);
+    send_key(KEY_UNKNOWN, WL_KEYBOARD_KEY_STATE_RELEASED);
+    wl_display_flush(wl_dpy);
+    g_timeout_add(80, quit_now, app);   /* let fcitx5 see the key before the name goes */
+  } else {
+    quit_now(app);
+  }
+  return G_SOURCE_CONTINUE;
+}
+static gboolean on_sigusr1(gpointer u) {
+  (void)u;
+  show_board(BY_USER);
+  /* A summons is also the moment to make sure fcitx5 still knows us: a
+   * hardware key, or a fold that came after a laptop-mode SUPER+B, will have
+   * left it in the other mode. Only where auto-show is wanted at all. */
+  if (auto_allowed()) { if (vk_name_id) fcitx_assert(); else fcitx_connect(); }
+  return G_SOURCE_CONTINUE;
+}
+static gboolean on_sigusr2(gpointer u) { (void)u; hide_board(); return G_SOURCE_CONTINUE; }
+
+/* The menu is driven by typing, and as far as fcitx5 can tell it is not a
+ * text field: opening it activates an input context but never asks for the
+ * keyboard (FINDINGS 17.3). So the menu is treated as one here, on the same
+ * gate: shown for it if nothing was up, put away when it closes unless a
+ * text field takes over -- the Show for that cancels the pending hide. */
+static void on_hypr_event(const char *line) {
+  if (g_str_equal(line, "openlayer>>omarchy-menu")) {
+    menu_open = TRUE;
+    if (g_win && gtk_widget_get_mapped(g_win)) { cancel_hide_timer(); restack(); }
+    else if (auto_allowed()) show_board(BY_AUTO);
+  } else if (g_str_equal(line, "closelayer>>omarchy-menu")) {
+    menu_open = FALSE;
+    auto_hide_later();
+  }
+}
+
 static void on_hypr_line(GObject *src, GAsyncResult *res, gpointer u);
 static void hypr_read_next(void) {
   g_data_input_stream_read_line_async(hypr_events, G_PRIORITY_DEFAULT, NULL,
@@ -693,7 +958,7 @@ static void on_hypr_line(GObject *src, GAsyncResult *res, gpointer u) {
     if (err) { g_warning("fw12-oskbd: hyprland event socket: %s", err->message); g_error_free(err); }
     return;
   }
-  if (g_str_equal(line, "openlayer>>omarchy-menu")) restack();
+  on_hypr_event(line);
   g_free(line);
   hypr_read_next();
 }
@@ -869,8 +1134,12 @@ static void on_activate(GtkApplication *app, gpointer u) {
    * up anyway; the hold says so explicitly rather than by accident. */
   g_application_hold(G_APPLICATION(app));
 
-  if (start_shown) show_board();
+  if (start_shown) show_board(BY_USER);
   else write_state("hidden");   /* no unmap ever fires for a window never mapped */
+
+  /* Folded, with auto-show wanted: become fcitx5's keyboard. In laptop mode
+   * fcitx5 is left exactly as it was. */
+  if (auto_allowed()) fcitx_connect();
 }
 
 /* Clear any latched modifiers on exit so nothing sticks in the compositor,

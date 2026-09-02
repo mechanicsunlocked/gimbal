@@ -96,7 +96,8 @@ Panel {
             "swipeDown": "@menu",
             "swipeRight": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r-1\" })'",
             "swipeLeft": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"r+1\" })'",
-            "blockOnMoonlight": true
+            "blockOnMoonlight": true,
+            "autoShow": true
         })
 
     readonly property var gestures: [
@@ -458,6 +459,53 @@ Panel {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     text: "One tap shows and hides the keyboard, three taps unlock a knob for moving, and a press-and-drag fires the four gestures below."
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                }
+
+                PanelSeparator {
+                    width: parent.width
+                    foreground: root.foreground
+                }
+
+                // ---------- Keyboard ----------
+                PanelSectionHeader {
+                    text: "KEYBOARD"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                }
+
+                Item {
+                    width: parent.width
+                    implicitHeight: autoShowLabel.implicitHeight
+
+                    Text {
+                        id: autoShowLabel
+
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Appear when a text field takes focus"
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    ToggleSwitch {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: autoShowLabel.verticalCenter
+                        trackHeight: Math.round(autoShowLabel.font.pixelSize * 1.2)
+                        cursorPad: Style.space(3)
+                        foreground: root.foreground
+                        checked: root.value("autoShow") === true
+                        onToggled: root.setValue("autoShow", !(root.value("autoShow") === true))
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "Tapping a text field, or opening the Omarchy menu, brings the keyboard up, and it goes away when they do. A keyboard you summoned yourself stays until you put it away. Off, the knobs, the bar icon and SUPER+B are the only ways in."
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption

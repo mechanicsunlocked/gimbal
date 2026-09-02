@@ -53,7 +53,7 @@ rm -f "$HOME/.local/state/omarchy/gimbal-button.json"
 rm -f "$HOME/.local/state/omarchy/gimbal-pads.json"
 rm -f "$HOME/.config/omarchy/gimbal.json"
 rm -f "${XDG_RUNTIME_DIR:-/tmp}/gimbal-fold" "${XDG_RUNTIME_DIR:-/tmp}/gimbal-mode" \
-      "${XDG_RUNTIME_DIR:-/tmp}/gimbal-osk"
+      "${XDG_RUNTIME_DIR:-/tmp}/gimbal-osk" "${XDG_RUNTIME_DIR:-/tmp}/gimbal-autoshow"
 
 omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 omarchy-restart-shell >/dev/null 2>&1 || true

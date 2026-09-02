@@ -7,6 +7,7 @@
 # Four parts, and they are genuinely separate pieces of software:
 #
 #   1. fw12-oskbd    the keyboard          -> ~/.local/bin
+#      (plus a check that fcitx5 can drive it; nothing of fcitx5's is edited)
 #   2. gimbal.lua  rotation           -> ~/.config/hypr, plus one require
 #                                             line in hyprland.lua
 #   3. the shell plugin  button + swipes   -> ~/.config/omarchy/plugins/<id>
@@ -75,6 +76,38 @@ case ":${PATH}:" in
     *) warn "$HOME/.local/bin is not on PATH; the button will not find the keyboard.
              Add it to ~/.bashrc (or ~/.config/uwsm/env) and log out and in." ;;
 esac
+
+# --------------------------------------------------------------------------
+# 1b. fcitx5, which is how the keyboard learns that a text field took focus
+#
+# Nothing is changed here, and nothing needs to be: the keyboard registers
+# with fcitx5's "DBus Virtual Keyboard" addon over the session bus at runtime,
+# and that addon is on demand -- it loads when asked and is left alone
+# otherwise (FINDINGS 15.4). What this checks is that the pieces exist, and
+# says exactly what to do if one does not, because a missing piece here would
+# otherwise show up as a keyboard that never appears by itself.
+# --------------------------------------------------------------------------
+say "Checking fcitx5 for auto-show"
+if [[ -f /usr/share/fcitx5/addon/virtualkeyboard.conf ]]; then
+    note "DBus Virtual Keyboard addon present ($(pacman -Q fcitx5 2>/dev/null || echo fcitx5))"
+else
+    warn "fcitx5's virtualkeyboard addon is missing; the keyboard will not appear by itself.
+             It ships in the fcitx5 package:  sudo pacman -S --needed fcitx5"
+fi
+if grep -qs '^DisabledAddons=.*virtualkeyboard' "$HOME/.config/fcitx5/config" 2>/dev/null; then
+    warn "virtualkeyboard is listed in DisabledAddons in ~/.config/fcitx5/config.
+             Auto-show needs it. Not changed here -- that file is yours. To allow it,
+             remove 'virtualkeyboard' from that line (or drop the line) and run:
+                 fcitx5-remote -r"
+else
+    note "addon not disabled in ~/.config/fcitx5/config"
+fi
+if pgrep -x fcitx5 >/dev/null 2>&1; then
+    note "fcitx5 is running"
+else
+    warn "fcitx5 is not running; Omarchy starts it as omarchy-fcitx5.service.
+             Auto-show waits for it and works once it is up."
+fi
 
 # --------------------------------------------------------------------------
 # 2. Rotation
