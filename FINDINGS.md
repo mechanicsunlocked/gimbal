@@ -2421,3 +2421,53 @@ built-in keyboard is off (§1.6), so the case is a Bluetooth keyboard — and
 then not popping the on-screen keyboard is right. The daemon re-asserts
 on every `SIGUSR1`, so one knob tap brings auto-show back, and a fold
 restarts the daemon, which registers afresh. There is no poll for it.
+
+---
+
+## 18. Phase 4: the lock screen keypad, validated without locking (2026-09-02)
+
+The session was never locked. Two things were checked instead.
+
+### 18.1 The modified `LockView` renders, in both modes
+
+A scratch Quickshell config hosting `lock-clone/LockView.qml` inside a
+full-screen `PanelWindow` on eDP-1, with Omarchy's `Commons` and `Ui`
+symlinked in so `qs.Commons` and `qs.Ui` resolve exactly as in the shell.
+`grim -o eDP-1` after 3.5 s, each time:
+
+| `gimbal-mode` says | `keypadOpen` | what rendered |
+|---|---|---|
+| `laptop` (the real file) | set true by the harness | the stock field with its dots and nothing else — `onFoldedChanged` had already cleared `keypadOpen`, which is the laptop-mode guarantee working |
+| `tablet` (a fake file the harness points `gimbalModePath` at) | true | the field, and below it five rows of keys, 900 logical px wide at x 150, y 442..726 on the 750-tall panel: `1..0`, `q..p`, `a..l`, `⇧ z..m ⌫`, `?123 [space] ⏎ ⌄` |
+
+The first render of the keypad had every key invisible: `Color.lock.background`
+is the page background in the stock theme (`#1a1b26`), and a key face painted
+in it is not there. Faces are a 14 % tint of `Color.lock.text` with a 28 %
+edge now; the second screenshot is the one described above.
+
+The harness log carried no QML error either time; the one warning is
+Quickshell's file scanner declining to follow an absolute `import` URL,
+which the engine itself resolved.
+
+### 18.2 The live clone
+
+`omarchy plugin clone omarchy.lock` created `~/.config/omarchy/plugins/msa.lock`
+with `clonedFrom: omarchy.lock`, enabled it, and disabled the built-in
+(`shell.json`: `plugins: [msa.lock]`, `disabledPlugins: [omarchy.lock]`).
+The two edited files were copied in; the shell logged
+`Local plugin changed, reloading: msa.lock` and nothing else.
+
+    $ omarchy-shell lock status
+    {"locked":false,"requested":false,"pending":false,"sessionLocked":false,"secure":false,"realScreens":2,"passwordPam":true,"fingerprint":false,...}
+    $ omarchy-shell lock preview      # then grim -o DP-3; then hidePreview
+    the stock view: blurred wallpaper, "Enter Password", no keypad (laptop mode)
+
+`fingerprint: false` — no fingerprint is enrolled on this machine, so that row
+of the checklist cannot be done here.
+
+### 18.3 What only a lock can tell
+
+Whether taps reach the keypad under `ext-session-lock`, whether the
+`MouseArea` on the field opens it, the wrong-password state with the keypad
+up, the idle-blank interplay, and portrait. All on the hands-on list; the
+clone is the stock code for everything the keypad does not touch.
