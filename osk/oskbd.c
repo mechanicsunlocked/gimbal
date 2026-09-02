@@ -263,6 +263,9 @@ static void refresh_highlight(void) {
     if (k->type == KT_MOD || k->type == KT_SUPER) {
       if ((one_shot | locks) & k->modbit) gtk_widget_add_css_class(k->button, "active-mod");
       else                                gtk_widget_remove_css_class(k->button, "active-mod");
+    } else if (k->type == KT_FN) {
+      if (fn_active) gtk_widget_add_css_class(k->button, "active-mod");
+      else           gtk_widget_remove_css_class(k->button, "active-mod");
     }
   }
 }
@@ -324,7 +327,8 @@ static void mod_tap(uint32_t bit, int np) {
  * release was lost and the key is freed. That is the actual fault condition,
  * so nothing legitimate is ever cut short.
  * ------------------------------------------------------------------------ */
-static void key_up(Key *k);   /* defined below, next to the send path */
+static void key_up(Key *k);        /* defined below, next to the send path */
+static void end_contact(Key *k);   /* likewise; the watchdog needs it too */
 
 #define PALM_KEYS      3
 #define PALM_WINDOW_US (150 * 1000)
@@ -351,7 +355,10 @@ static gboolean watchdog(gpointer u) {
     if (k->gest && !gtk_gesture_is_active(k->gest)) {
       g_warning("fw12-oskbd: freeing stuck key %u (touch ended with no release)",
                 k->down_code);
-      key_up(k);
+      /* The lost release was a contact too. Ending it here is what keeps the
+       * contact count honest; freeing only the key left it one high for ever,
+       * and a palm guard that has tripped with a stale count never resets. */
+      end_contact(k);
     } else {
       still_held++;
     }
@@ -395,9 +402,7 @@ static void on_pressed(GtkGestureClick *g, int np, double x, double y, gpointer 
     case KT_SUPER:
       mod_tap(MSuper, np); send_mods(); refresh_highlight(); relabel_keys(); break;
     case KT_FN:
-      fn_active = !fn_active; relabel_keys();
-      if (fn_active) gtk_widget_add_css_class(k->button, "active-mod");
-      else           gtk_widget_remove_css_class(k->button, "active-mod");
+      fn_active = !fn_active; refresh_highlight(); relabel_keys();
       break;
     case KT_CODE:
       k->down_code = (fn_active && k->fn_code) ? k->fn_code : k->code;
@@ -450,6 +455,10 @@ static const char *logo_path(void) {
   static char buf[512];
   const char *e = g_getenv("FW12TAB_LOGO");
   if (e && *e) return e;
+#ifdef GIMBAL_DATADIR
+  if (g_file_test(GIMBAL_DATADIR "/framework-logo.svg", G_FILE_TEST_EXISTS))
+    return GIMBAL_DATADIR "/framework-logo.svg";
+#endif
 
   const char *home = g_get_home_dir();
   if (home) {
@@ -556,6 +565,7 @@ static void hide_board(void) {
   shown_by = BY_NONE;
   if (!g_win || !gtk_widget_get_visible(g_win)) return;
   release_all();   /* nothing stays down or latched on a keyboard that is not there */
+  contacts = 0; palming = FALSE;   /* and no finger can be on a surface that is gone */
   gtk_widget_set_visible(g_win, FALSE);
 }
 
@@ -807,6 +817,7 @@ static const char *const TYPED_OVERLAYS[] = {
   "omarchy-menu", "omarchy-polkit", "omarchy-emojis", "omarchy-clipboard", "omarchy-reminders", NULL };
 static int overlays_open;   /* how many of them are mapped right now */
 static gboolean quitting;   /* the farewell key below provokes a Hide; it must not be answered */
+static gint64   last_deactivated_us;   /* fcitx5 says NotifyIMDeactivated just before a focus-out Hide */
 
 /* One small file, read when it matters: $XDG_RUNTIME_DIR/<name> == word. */
 static gboolean runtime_word_is(const char *name, const char *word) {
@@ -855,7 +866,15 @@ static void on_fcitx_show(void) {
 }
 static void on_fcitx_hide(void) {
   if (quitting) return;
-  if (g_get_monotonic_time() - last_key_us < GRACE_US) {
+  gint64 now = g_get_monotonic_time();
+  /* Two kinds of Hide look the same on the wire. A field losing focus comes
+   * as NotifyIMDeactivated then Hide, back to back; the one our own key
+   * provokes is a bare Hide, because the addon is suspending and its
+   * watchers are already gone (FINDINGS 17.1, 19.5). So a Hide within a few
+   * ms of a NotifyIMDeactivated is a real focus-out, whatever the grace
+   * window says -- Enter on the board closing a dialog is exactly that. */
+  gboolean focus_out = now - last_deactivated_us < 50 * 1000;
+  if (!focus_out && now - last_key_us < GRACE_US) {
     /* Our own key. fcitx5 took it for a hardware keyboard; put it back. */
     fcitx_assert();
     return;
@@ -870,6 +889,7 @@ static void on_method_call(GDBusConnection *c, const gchar *sender, const gchar 
   (void)c; (void)sender; (void)path; (void)iface; (void)params; (void)u;
   if (g_str_equal(method, "ShowVirtualKeyboard"))      on_fcitx_show();
   else if (g_str_equal(method, "HideVirtualKeyboard")) on_fcitx_hide();
+  else if (g_str_equal(method, "NotifyIMDeactivated")) last_deactivated_us = g_get_monotonic_time();
   /* NotifyIM*, UpdatePreedit*, UpdateCandidateArea: a plain Latin layout has
    * nothing to do with them, but every call still gets its reply. */
   g_dbus_method_invocation_return_value(inv, NULL);
@@ -952,6 +972,7 @@ static void fcitx_hand_back(void) {
 }
 
 static gboolean quit_now(gpointer app) {
+  release_all();   /* a key held at this instant would otherwise repeat in the client for ever */
   fcitx_hand_back();
   if (fcitx_watch_id) { g_bus_unwatch_name(fcitx_watch_id); fcitx_watch_id = 0; }
   if (vk_name_id) { g_bus_unown_name(vk_name_id); vk_name_id = 0; name_owned = FALSE; }
@@ -1056,19 +1077,6 @@ static void on_activate(GtkApplication *app, gpointer u) {
 
   g_state_path = g_strdup_printf("%s/gimbal-osk", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
 
-  /* The Ctrl caps are the only fixed labels that are language-specific: a
-   * German board says Strg, everyone else says Ctrl. Every other derived key
-   * gets its legend from the keymap in relabel_keys(), so this is the one
-   * place the layout has to be consulted by hand. */
-  if (g_str_has_prefix(layout, "de") || g_str_has_prefix(layout, "at")
-      || g_str_has_prefix(layout, "ch")) {
-    /* keep the table's default */
-  } else {
-    for (int i = 0; i < NKEYS; i++)
-      if (keys[i].label && !g_strcmp0(keys[i].label, "Strg"))
-        keys[i].label = "Ctrl";
-  }
-
   GtkWidget *win = gtk_application_window_new(app);
   gtk_layer_init_for_window(GTK_WINDOW(win));
   /* Overlay, not top: the Omarchy menu is an overlay-layer surface, and a
@@ -1113,8 +1121,20 @@ static void on_activate(GtkApplication *app, gpointer u) {
   if (vk_mgr && wl_seat_obj) {
     vkbd = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(vk_mgr, wl_seat_obj);
     g_keymap = upload_keymap(layout, variant, options);
+    if (!g_keymap) {
+      /* A name xkbcommon cannot compile -- Hyprland itself falls back to us
+       * for these and keeps reporting the bad name. A virtual keyboard with
+       * no keymap is worse than a wrong one: the first key would be a
+       * protocol error and the process would abort. */
+      g_warning("fw12-oskbd: layout '%s' variant '%s' does not compile; using us", layout, variant);
+      g_keymap = upload_keymap("us", "", "");
+    }
+    if (!g_keymap) { zwp_virtual_keyboard_v1_destroy(vkbd); vkbd = NULL; }
+    /* The compositor has to have processed the keymap before it accepts a
+     * key (FINDINGS 3.1e). */
+    wl_display_roundtrip(wl_dpy);
   }
-  if (!g_keymap) g_warning("fw12tab oskbd: no virtual keyboard / keymap; keys will not type");
+  if (!g_keymap) g_warning("fw12-oskbd: no virtual keyboard / keymap; keys will not type");
 
   for (int i = 0; i < NKEYS; i++) {
     Key *k = &keys[i];
@@ -1181,10 +1201,6 @@ static void on_activate(GtkApplication *app, gpointer u) {
 
   g_signal_connect(win, "map", G_CALLBACK(on_map), NULL);
   g_signal_connect(win, "unmap", G_CALLBACK(on_unmap), NULL);
-  g_unix_signal_add(SIGUSR1, on_sigusr1, NULL);
-  g_unix_signal_add(SIGUSR2, on_sigusr2, NULL);
-  g_unix_signal_add(SIGTERM, on_sigterm, app);
-  g_unix_signal_add(SIGINT, on_sigterm, app);
   /* A hidden window still counts as a window, so the application would stay
    * up anyway; the hold says so explicitly rather than by accident. */
   g_application_hold(G_APPLICATION(app));
@@ -1214,6 +1230,14 @@ int main(int argc, char **argv) {
    * Die with the parent instead. */
   prctl(PR_SET_PDEATHSIG, SIGTERM);
   GtkApplication *app = gtk_application_new("org.fw12.osk", G_APPLICATION_NON_UNIQUE);
+  /* Before anything else: the plugin may signal a show or a hide within
+   * milliseconds of starting us, and until these are installed SIGUSR1 and
+   * SIGUSR2 mean "terminate". The handlers cope with a window that does not
+   * exist yet. */
+  g_unix_signal_add(SIGUSR1, on_sigusr1, NULL);
+  g_unix_signal_add(SIGUSR2, on_sigusr2, NULL);
+  g_unix_signal_add(SIGTERM, on_sigterm, app);
+  g_unix_signal_add(SIGINT, on_sigterm, app);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), argv);
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   /* Don't let GTK parse our positional layout args. */

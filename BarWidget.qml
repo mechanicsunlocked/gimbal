@@ -38,14 +38,25 @@ Panel {
 
     // Each knob is its own switch. Configs written before they were split say
     // "pads", and before that "mode", so both are still understood.
+    // The same three layers Panel.qml reads: our file, then this plugin's
+    // entry in shell.json (the host hands it to us as `settings`), then the
+    // default. A box drawn from fewer layers than the knob it controls showed
+    // the wrong state and made the first tap a visible no-op.
+    function layered(key) {
+        var v = root.conf ? root.conf[key] : undefined;
+        if (v !== undefined && v !== null)
+            return v;
+        return root.setting(key, undefined);
+    }
+
     function onOff(key) {
-        var c = root.conf || ({});
-        var v = c[key];
+        var v = root.layered(key);
         if (v !== undefined && v !== null)
             return v === true;
-        if (c["pads"] !== undefined && c["pads"] !== null)
-            return c["pads"] === true;
-        return String(c["mode"] || "both") !== "edges";
+        var pads = root.layered("pads");
+        if (pads !== undefined && pads !== null)
+            return pads === true;
+        return String(root.layered("mode") || "both") !== "edges";
     }
 
     readonly property string home: Quickshell.env("HOME") || ""
@@ -120,7 +131,7 @@ Panel {
     ]
 
     function value(key) {
-        var v = root.conf ? root.conf[key] : undefined;
+        var v = root.layered(key);
         return (v === undefined || v === null) ? root.fallback[key] : v;
     }
 
@@ -539,14 +550,35 @@ Panel {
                             font.pixelSize: Style.font.caption
                         }
 
+                        // Not a binding on `text`: a binding re-evaluates when any
+                        // setting changes and would throw away a command still being
+                        // typed. The field is filled once, refilled from the file only
+                        // while it is not being edited, and saved on every keystroke,
+                        // so nothing typed on a knob-summoned keyboard is ever lost to
+                        // a tap on another control.
                         TextField {
+                            id: gestureField
+
+                            readonly property string key: parent.modelData.key
+
                             width: parent.width
-                            text: String(root.value(parent.modelData.key))
-                            placeholderText: String(root.fallback[parent.modelData.key])
+                            placeholderText: String(root.fallback[gestureField.key])
                             foreground: root.foreground
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
-                            onEditingFinished: root.setValue(parent.modelData.key, text)
+
+                            Component.onCompleted: gestureField.text = String(root.value(gestureField.key))
+                            onTextEdited: root.setValue(gestureField.key, text)
+                            onEditingFinished: root.setValue(gestureField.key, text)
+
+                            Connections {
+                                target: root
+
+                                function onConfChanged() {
+                                    if (!gestureField.activeFocus)
+                                        gestureField.text = String(root.value(gestureField.key));
+                                }
+                            }
                         }
                     }
                 }

@@ -1021,7 +1021,8 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-menu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    WlrLayershell.keyboardFocus: gimbalMode.tablet ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
+    FileView { id: gimbalMode; property bool tablet: false; path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/gimbal-mode"; watchChanges: true; printErrors: false; onFileChanged: reload(); onLoaded: tablet = text().trim() === "tablet"; onLoadFailed: tablet = false }
     exclusionMode: ExclusionMode.Ignore
 
     // The card opens centered exactly as always. The first search keystroke

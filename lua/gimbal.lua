@@ -223,7 +223,11 @@ local function accel_dir()
         return S.accel
     end
     S.accel = find_iio("label", "accel-display")
-    if not S.accel then
+    if not S.accel and not S.accel_warned then
+        -- Once per fold. This runs on every tick while folded, and a missing
+        -- sensor used to mean a fresh five-second notification four times a
+        -- second for as long as the machine stayed a tablet.
+        S.accel_warned = true
         hl.notification.create({
             text = "gimbal: no accel-display sensor; rotation disabled",
             timeout = 5000,
@@ -293,10 +297,17 @@ local function apply(transform)
     target = target or monitors[1]
     if not target then return end
 
+    -- Position passed through rather than "auto": auto places the monitor
+    -- after the last one placed, which on a docked machine put the panel on
+    -- the other side of the external display until the next reload.
+    local position = "auto"
+    if type(target.x) == "number" and type(target.y) == "number" then
+        position = string.format("%dx%d", target.x, target.y)
+    end
     hl.monitor({
         output = target.name,
         mode = "preferred",
-        position = "auto",
+        position = position,
         scale = target.scale,
         transform = transform,
     })
@@ -367,7 +378,11 @@ local function resync()
     S.resync_n = 0
 
     local folded = fold_read()
-    if folded == nil then
+    -- The angle stands in only where no switch has ever answered. Right after
+    -- a switch edge the last answer has been discarded on purpose and the next
+    -- is still in flight, and letting the angle decide in that gap re-entered
+    -- tablet mode for five seconds on a lid laid flat past 180 degrees.
+    if folded == nil and not S.fold_dev then
         local angle = lid_angle()
         if angle then
             if S.tablet and angle < LAPTOP_ANGLE then
@@ -431,6 +446,7 @@ end
 
 function leave_tablet()
     S.tablet = false
+    S.accel_warned = false
     fold_invalidate()
     S.pending, S.pending_n = nil, 0
     write_mode("laptop")
@@ -490,10 +506,12 @@ hl.bind("switch:off:" .. SWITCH_DEV, leave_tablet, { locked = true })
 
 S.timer = hl.timer(tick, { timeout = POLL_MS, type = "repeat" })
 
--- Publish a state before deciding, so a reader that starts between here and
--- the seed below never sees a stale word from the previous Hyprland session.
-write_mode("laptop")
-if seed_initial_state() then enter_tablet() end
+-- Decide first, publish once. Writing "laptop" and then "tablet" ten
+-- milliseconds later on every reload was a real transition to the plugin
+-- watching the file: it killed the resident keyboard and started it again,
+-- keyboard on screen or not. The word from the previous session stays for
+-- the length of one fold_now() instead, and it is almost always right.
+if seed_initial_state() then enter_tablet() else write_mode("laptop") end
 
 function M.status()
     return {

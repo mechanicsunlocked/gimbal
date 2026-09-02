@@ -23,8 +23,12 @@ Item {
     property bool shift: false
     property bool symbols: false
 
-    readonly property int keyHeight: Style.space(52)
-    readonly property int gap: Style.space(6)
+    // Plain pixels, not Style.space(): the password field is a fixed 381x67
+    // box, and a keypad that grew with the shell font walked up over it at
+    // larger text sizes. The lock view hands in a height that stops short of
+    // the field.
+    property int keyHeight: 52
+    readonly property int gap: 6
     // Faces are a tint of the ink, not the lock background: in the stock
     // theme that background is the page background, and a key painted in it
     // is a key you cannot see (measured -- a screenshot of exactly that).

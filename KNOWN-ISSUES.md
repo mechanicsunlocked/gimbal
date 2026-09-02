@@ -104,16 +104,23 @@ menu is one. The finger lands on the menu's scrim, which cancels it
 
 **Status.** Fixed by `install.sh`, which clones the menu, the polkit
 password prompt, the emoji and clipboard pickers and the reminder prompt,
-each differing from Omarchy's file by one word, `WlrKeyboardFocus.OnDemand`.
-That keeps focus on map and typing intact — measured with virtual-pointer
-clicks on the `a` key: the menu filtered and stayed, the polkit prompt took
-two characters and stayed, a click on the scrim still closed the menu, Esc
-still cancelled the prompt (FINDINGS 19.3, 19.5). None of those fields can
-ask fcitx5 for a keyboard (Qt never does), so the keyboard also comes up on
-its own when any of the five opens. It cannot be fixed from the plugin;
-upstream draft D asks for the word at the source, and the clones go away
-when it lands. Without them, keys sent without a touch — a Bluetooth
-keyboard — reach the menu fine, and a finger does not.
+each differing from Omarchy's file by one line: while folded they take
+keyboard focus on demand, in laptop mode exactly as before. On demand keeps
+focus on map and typing intact — measured with virtual-pointer clicks on the
+`a` key: the menu filtered and stayed, the polkit prompt took two characters
+and stayed, a click on the scrim still closed the menu, Esc still cancelled
+the prompt (FINDINGS 19.3, 19.5). None of those fields can ask fcitx5 for a
+keyboard (Qt never does), so the keyboard also comes up on its own when any
+of the five opens. It cannot be fixed from the plugin; upstream draft D asks
+for it at the source, and the clones go away when it lands.
+
+**Two edges that remain.** Hiding the keyboard with `SUPER+B` while one of
+those overlays is open hands keyboard focus to the window behind it
+(Hyprland refocuses the last window and skips on-demand layers); tap beside
+the overlay to close it, or open it again. And a clone is a copy: an Omarchy
+update to one of those files reaches your clone only when `install.sh` runs
+again, which rebuilds it from the new file — or warns, for the lock screen,
+if the keypad no longer fits.
 
 ### fcitx5 can be left with no user interface
 
@@ -142,6 +149,17 @@ already loaded is served from that cache; `rescanPlugins` does not clear it
 (FINDINGS 3.1i, and 19.3 where it cost two rounds of testing).
 
 **If it happens.** `omarchy-restart-shell`. Both clone READMEs say so.
+
+### A hidden backup is not left behind any more, but check once
+
+**What you see.** After `uninstall.sh`, `ls -a ~/.config/omarchy/plugins`
+still shows `.<you>.lock.bak.<timestamp>` directories.
+
+**Why.** `omarchy plugin remove` keeps a hidden backup of a plugin directory
+that is not a git checkout. `uninstall.sh` now deletes the backups of the
+clones it made; one from an earlier version of this repo may remain.
+
+**If it happens.** `rm -rf ~/.config/omarchy/plugins/.<you>.*.bak.*`.
 
 ### The layout is read when the shell starts
 

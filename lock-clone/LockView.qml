@@ -67,14 +67,21 @@ Item {
   }
   onKeypadOpenChanged: console.log("gimbal lock: keypadOpen=" + keypadOpen)
 
+  // Same gate as the TextInput: nothing while a check is running or before
+  // input is enabled, or typed-ahead characters land and then vanish.
+  readonly property bool keypadEnabled: inputEnabled && !authenticatingPassword
+
   function keypadType(ch) {
+    if (!root.keypadEnabled) return
     root.passwordTextEdited(root.passwordText + ch)
   }
   function keypadBackspace() {
+    if (!root.keypadEnabled) return
     root.wakeRequested()
     root.passwordTextEdited(root.passwordText.slice(0, -1))
   }
   function keypadSubmit() {
+    if (!root.keypadEnabled) return
     root.wakeRequested()
     var submitted = root.passwordText
     root.passwordTextEdited("")
@@ -281,12 +288,14 @@ Item {
 
     // gimbal: the keypad. Below the field in both orientations -- on the
     // 1200x750 panel the field ends at y 408 and this starts at 442 -- and
-    // never above it, so the dots stay in view while you type.
+    // never above it: the key height shrinks before the top row could reach
+    // the field, so the dots stay in view while you type.
     LockKeypad {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(24)
-      width: Math.min(parent.width - Style.space(32), Style.space(900))
+      anchors.bottomMargin: 24
+      width: Math.min(parent.width - 32, 900)
+      keyHeight: Math.max(36, Math.min(52, Math.floor((parent.height / 2 - root.fieldHeight / 2 - 24 - 24 - 4 * 6) / 5)))
       visible: root.folded && root.keypadOpen
       onTyped: function(ch) { root.keypadType(ch) }
       onBackspace: root.keypadBackspace()

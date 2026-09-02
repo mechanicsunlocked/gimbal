@@ -41,9 +41,17 @@ tap on it is a tap on the menu, since nothing else is under the finger there.
 What changes is only that a surface stacked above the menu can now be
 touched.
 
-The same reasoning applies to the image selector, emojis, clipboard and
-keyboard panel overlays, which share the rule in
-`default/hypr/apps/omarchy-shell.lua`.
+The same reasoning applies to the polkit prompt, emojis, clipboard,
+reminders and image selector overlays.
+
+One caveat, measured after the first version of this draft: with a second
+monitor and the mouse on it, an on-demand overlay can lose keyboard focus to
+a window under the pointer (`allowKeyboardRefocus` is only held false for
+exclusive layers, and `refocusLastWindow()` skips on-demand ones). Gimbal's
+clones therefore switch to on demand only while the machine is folded, where
+there is no mouse. Upstream could do the same on a touchscreen, or keep
+exclusive focus and ask Hyprland (draft C's neighbour) not to route input
+past surfaces stacked above an exclusive layer.
 
 ## Context
 

@@ -2674,3 +2674,87 @@ what the board sends — the modifier mask plus `KEY_1`, matched by keycode —
 and a cap reading `!` at that moment was the only thing wrong. Measured with
 pointer clicks: Shift alone typed `A` into a GTK entry and showed the shifted
 row; Ctrl latched showed `1..0` and `Ctrl+A` selected the entry's text.
+
+---
+
+## 20. A review pass, and what it found (2026-09-02)
+
+Four readers went over the daemon, the plugin QML, the Lua and scripts, and
+the clones, hunting for defects with a concrete failing scenario; two of
+their claims were then independently re-derived by a second reader before
+the session's usage limit stopped the rest, and the remainder were checked
+by hand against the code. Twenty-six stood, one did not. The one that did
+not: Quickshell does *not* respawn a `Process` that dies on its own —
+measured: `SIGKILL` on the laptop-mode keyboard, no new process after 3 s —
+so the plugin's "if it dies, the next tap starts it again" model holds.
+
+What stood, and what changed, by area:
+
+**Daemon.** The stuck-key watchdog freed a key with `key_up()` and not
+`end_contact()`, so a lost release left the contact count one high for ever
+and the palm guard either dead or, once tripped, permanently swallowing
+every tap (the second reader traced the exact GTK 4.22 gesture path that
+loses the release: a second finger on the same key). Fixed, and a hide now
+resets the count outright. `SIGUSR1`/`SIGUSR2` were installed only at the
+end of `on_activate()`, so a show or hide in the first hundred milliseconds
+killed the process with the default disposition; they are installed in
+`main()` now. A layout xkbcommon cannot compile left a virtual keyboard with
+no keymap, and the first key would have been a protocol error and an abort;
+it falls back to `us` and, failing that, sends nothing. The grace window
+swallowed a genuine focus-out that our own Enter caused (a dialog closing);
+fcitx5 says `NotifyIMDeactivated` right before a focus-out Hide and nothing
+before the Hide our key provokes, so that pair is now told apart. The Fn cap
+stayed lit after `release_all()`; a key held at exit was never released; the
+"Strg" relabel was dead code; the logo was looked for in two fixed places
+regardless of `PREFIX`.
+
+**Plugin.** On a shell start while folded the daemon was started before
+`hyprctl getoption` had answered, with the `us` fallback for the whole fold;
+`resident` now waits for both answers. Quickshell keeps `running` true until
+a stopped process has actually exited, and the daemon's exit does D-Bus work,
+so a fold or a show landing in that window was lost — the plugin now carries
+the wish across the exit. The bar's gesture fields were bindings, so a
+command still being typed was thrown away by a tap on any other control;
+they are filled once, refilled only while not being edited, and saved on
+every keystroke. The bar panel read one settings layer where the knobs read
+two, so a value set in `shell.json` drew the wrong state and the first tap
+was a no-op.
+
+**Lua.** Every `hyprctl reload` wrote `laptop` and then `tablet` ten
+milliseconds apart, a real transition to the plugin watching the file,
+which killed and restarted the resident keyboard; it decides first and
+writes once now. A missing accelerometer produced a notification four times
+a second for as long as the machine was folded; once per fold now. After a
+switch edge the hinge angle was consulted for five seconds and could
+re-enter tablet mode on a lid laid flat; the angle stands in only where no
+switch has ever answered. Rotation re-issued the monitor rule with
+`position = "auto"`, which on a docked machine moved the panel to the other
+side of the external display; the position is passed through.
+
+**Scripts.** The fcitx5 `DisabledAddons` check looked for a line fcitx5
+never writes (it uses a `[Behavior/DisabledAddons]` subsection). The
+fold-switch reader's build was fatal under `set -e` despite a comment
+saying otherwise. The `PATH` check tested the installer's shell, not the
+session's. `omarchy plugin remove` keeps a hidden `.<id>.bak.<timestamp>`
+copy of a non-git plugin, so every install/uninstall cycle left two more
+directories behind. The lock keypad was copied over the fresh clone's
+`LockView.qml` as a snapshot, so an Omarchy update would have run an old
+view against a new `Service.qml` — the keypad ships as a patch against the
+stock file now, applied to Omarchy's current one and refused, with a
+warning, if that has changed.
+
+**Clones.** Plain on-demand focus has a cost in laptop mode: with a second
+monitor, a mouse moving onto a window there takes keyboard focus away from
+an open menu or password prompt, which exclusive focus prevented. So the
+overlays are on demand *only while folded* — one line that reads the same
+mode file the knobs do — and byte-for-byte stock behaviour otherwise. The
+lock keypad scaled with the shell font while the password field is a fixed
+box, so a large font walked it up over the field; plain pixels now, and a
+key height that stops short of the field. Keypad taps during "Checking…"
+landed and then vanished; gated as the physical keyboard is.
+
+Two things remain by design and are in KNOWN-ISSUES: hiding the keyboard
+by `SUPER+B` while a typed overlay is open hands focus to the window behind
+(Hyprland's `refocusLastWindow` skips on-demand layers), and a clone does
+not follow Omarchy updates to the file it changed until `install.sh` runs
+again.

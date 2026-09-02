@@ -163,7 +163,12 @@ Item {
     // cost a process.
     // -----------------------------------------------------------------------
     property bool modeKnown: false
-    readonly property bool resident: root.modeKnown && root.showButton
+    // Both hyprctl getoption calls have answered (or failed); before that the
+    // layout would be the "us" fallback and the daemon, started once per fold,
+    // would keep it for the whole fold.
+    property int layoutAnswers: 0
+    readonly property bool layoutKnown: root.layoutAnswers >= 2
+    readonly property bool resident: root.modeKnown && root.layoutKnown && root.showButton
     property bool keyboardShown: false
 
     // Linux signal numbers; Process.signal() takes the integer.
@@ -182,6 +187,16 @@ Item {
         onLoadFailed: root.keyboardShown = false
     }
 
+    // Quickshell keeps `running` true from the moment we ask the process to
+    // stop until it has actually exited, and the daemon's exit does real work
+    // (fcitx5 is handed its UI back over D-Bus). A request that lands in that
+    // window used to be signalled at a dying process and lost, and a fold
+    // that arrived in it left the machine folded with no daemon at all. So
+    // stopping is a state of its own, and what was wanted in the meantime is
+    // carried out when the exit comes.
+    property bool daemonStopping: false
+    property bool showAfterExit: false
+
     function startDaemon(shown) {
         // Positional: layout, variant, options, the gutter to keep clear,
         // and how to start. Set right before each start because the last
@@ -190,14 +205,20 @@ Item {
         keyboard.running = true;
     }
 
+    function stopDaemon() {
+        root.daemonStopping = true;
+        root.showAfterExit = false;
+        keyboard.running = false;
+    }
+
     // Fold starts it hidden. Unfold kills it, on screen or not: a keyboard
     // left up would strand its exclusive zone with no knob left to dismiss
     // it. Laptop mode never starts one here; see requestKeyboard.
     function syncDaemon() {
         if (root.resident && !keyboard.running)
             root.startDaemon(false);
-        else if (!root.resident && keyboard.running)
-            keyboard.running = false;
+        else if (!root.resident && keyboard.running && !root.daemonStopping)
+            root.stopDaemon();
     }
     onResidentChanged: syncDaemon()
 
@@ -304,21 +325,28 @@ Item {
         if (on && root.keyboardBlocked)
             return;
         if (root.resident) {
-            if (keyboard.running)
+            if (keyboard.running && !root.daemonStopping)
                 keyboard.signal(on ? root.sigShow : root.sigHide);
+            else if (on && keyboard.running)
+                root.showAfterExit = true;   // on its way out; come back showing
             else if (on)
-                root.startDaemon(true);   // it died; this tap brings it back, showing
+                root.startDaemon(true);      // it died; this tap brings it back, showing
             return;
         }
         // Laptop mode. SUPER+B works here too, and the keyboard lives exactly
         // as long as it is on screen, so an unfolded machine carries nothing
         // resident.
-        if (!on)
-            keyboard.running = false;
-        else if (keyboard.running)
-            keyboard.signal(root.sigShow);
-        else
+        if (!on) {
+            if (keyboard.running && !root.daemonStopping)
+                root.stopDaemon();
+        } else if (keyboard.running) {
+            if (root.daemonStopping)
+                root.showAfterExit = true;
+            else
+                keyboard.signal(root.sigShow);
+        } else {
             root.startDaemon(true);
+        }
     }
 
     // Reachable from a keybind as
@@ -358,6 +386,7 @@ Item {
                 });
             }
         }
+        onExited: root.layoutAnswers += 1
     }
 
     Process {
@@ -370,6 +399,7 @@ Item {
                 });
             }
         }
+        onExited: root.layoutAnswers += 1
     }
 
     Process {
@@ -388,6 +418,15 @@ Item {
             // not, and a stale `visible` would hold follow_mouse and light
             // the bar icon over nothing.
             oskStateFile.setText("hidden");
+            root.daemonStopping = false;
+            if (root.showAfterExit) {
+                root.showAfterExit = false;
+                root.startDaemon(true);
+            } else if (root.resident) {
+                // A fold that landed while it was leaving, or a mode flap
+                // faster than its exit: the fold owns a daemon, so have one.
+                Qt.callLater(root.syncDaemon);
+            }
         }
     }
 

@@ -195,7 +195,8 @@ noticed until they matter.
 - [ ] `omarchy plugin validate .` exits 0.
 - [ ] `hyprctl configerrors` is clean after `hyprctl reload`.
 - [ ] Installed copies match the repo.
-- [ ] Uninstall works, and leaves nothing behind.
+- [ ] Uninstall works, and leaves nothing behind — including no hidden
+      `.<you>.*.bak.*` directories under `~/.config/omarchy/plugins`.
 - [ ] Install on a clean state and confirm the documented steps are the ones
       that actually work.
 - [ ] Decide the Framework logo question — ship the `❖` fallback by default,

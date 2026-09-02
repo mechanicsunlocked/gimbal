@@ -76,18 +76,22 @@ note "$HOME/.local/bin/fw12-oskbd"
 # from latching the wrong mode. Rotation still works without it -- the hinge
 # angle is the fallback -- so a build failure here is not fatal to the install.
 say "Building and installing fw12-foldstate"
-make -C "$here/tools" --no-print-directory
-make -C "$here/tools" --no-print-directory install
-note "$HOME/.local/bin/fw12-foldstate"
+if make -C "$here/tools" --no-print-directory && make -C "$here/tools" --no-print-directory install; then
+    note "$HOME/.local/bin/fw12-foldstate"
+else
+    warn "fw12-foldstate did not build; folding falls back to the hinge angle (noticed within five seconds)"
+fi
 
 # The plugin starts the keyboard by name, so it has to be findable in the
 # environment omarchy-shell inherited -- which is the session's, not this
 # shell's. A PATH that is fine here and wrong there is the one failure of this
 # script that would look like a broken button rather than a missing directory.
-case ":${PATH}:" in
+session_path=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^PATH=//p' | tail -n 1)
+: "${session_path:=$PATH}"
+case ":${session_path}:" in
     *":$HOME/.local/bin:"*) ;;
-    *) warn "$HOME/.local/bin is not on PATH; the button will not find the keyboard.
-             Add it to ~/.bashrc (or ~/.config/uwsm/env) and log out and in." ;;
+    *) warn "$HOME/.local/bin is not on the session's PATH; the knobs will not find the keyboard.
+             Add it to ~/.config/environment.d/ (or ~/.config/uwsm/env) and log out and in." ;;
 esac
 
 # --------------------------------------------------------------------------
@@ -107,7 +111,9 @@ else
     warn "fcitx5's virtualkeyboard addon is missing; the keyboard will not appear by itself.
              It ships in the fcitx5 package:  sudo pacman -S --needed fcitx5"
 fi
-if grep -qs '^DisabledAddons=.*virtualkeyboard' "$HOME/.config/fcitx5/config" 2>/dev/null; then
+fcitx_conf="$HOME/.config/fcitx5/config"
+if [[ -f $fcitx_conf ]] && { grep -qs '^DisabledAddons=.*virtualkeyboard' "$fcitx_conf" \
+        || sed -n '/^\[Behavior\/DisabledAddons\]/,/^\[/p' "$fcitx_conf" | grep -qE '^[0-9]+=virtualkeyboard$'; }; then
     warn "virtualkeyboard is listed in DisabledAddons in ~/.config/fcitx5/config.
              Auto-show needs it. Not changed here -- that file is yours. To allow it,
              remove 'virtualkeyboard' from that line (or drop the line) and run:
@@ -184,9 +190,15 @@ fi
 #   * the typed overlays -- the menu, the polkit password prompt, the emoji
 #     and clipboard pickers, the reminder prompt: Hyprland sends every touch
 #     to a surface with *exclusive* keyboard focus, whatever is drawn above
-#     it, so a finger on the keyboard lands on them instead. They have to take
-#     focus on demand -- one word each, and typing works unchanged (FINDINGS
-#     19.3).
+#     it, so a finger on the keyboard lands on them instead. While folded they
+#     take focus on demand instead, and typing works unchanged (FINDINGS
+#     19.3). Only while folded: on demand also lets a mouse on a second
+#     monitor take the focus away, which is a laptop problem, so laptop mode
+#     keeps Omarchy's exclusive focus exactly.
+#
+# The changes are applied to the clone's own, current files -- a patch for the
+# lock view, an edit for the overlays -- never copied over them, so an Omarchy
+# update that changes one of those files is noticed rather than clobbered.
 #
 # Omarchy's answer for editing a built-in plugin is `omarchy plugin clone`,
 # which copies it to ~/.config/omarchy/plugins/<you>.<name> and switches to
@@ -201,21 +213,48 @@ clone_dir="$HOME/.config/omarchy/plugins"
 typed_overlays="menu:Menu.qml polkit:PolkitAgent.qml emojis:Emojis.qml clipboard:Clipboard.qml reminders:ReminderFlow.qml"
 note "these clone Omarchy's lock screen, menu, polkit prompt, emoji and clipboard pickers"
 note "and reminder prompt into $clone_dir/$me.<name>, each with a small change"
+# The one edit every typed overlay gets: its keyboard focus follows the fold
+# state Gimbal publishes, and a Quickshell.Io import if the file lacks one.
+# Idempotent -- a file already carrying the edit matches nothing here.
+patch_overlay() {
+    local f=$1
+    grep -q '^import Quickshell.Io' "$f" || sed -i '0,/^import Quickshell$/s//import Quickshell\nimport Quickshell.Io/' "$f"
+    sed -i -E 's|^(\s*)WlrLayershell\.keyboardFocus: WlrKeyboardFocus\.(Exclusive\|OnDemand)$|\1WlrLayershell.keyboardFocus: gimbalMode.tablet ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive\n\1FileView { id: gimbalMode; property bool tablet: false; path: (Quickshell.env("XDG_RUNTIME_DIR") \|\| "/tmp") + "/gimbal-mode"; watchChanges: true; printErrors: false; onFileChanged: reload(); onLoaded: tablet = text().trim() === "tablet"; onLoadFailed: tablet = false }|' "$f"
+}
+
 if ask "Set them up?"; then
     for spec in lock:LockView.qml $typed_overlays; do
-        src=${spec%%:*}; entry=${spec#*:}; target="$clone_dir/$me.$src"
+        src=${spec%%:*}; entry=${spec#*:}; target="$clone_dir/$me.$src"; created=0
         if [[ ! -d $target ]]; then
             omarchy plugin clone "omarchy.$src" >/dev/null 2>&1 \
                 || { warn "omarchy plugin clone omarchy.$src failed; skipping it"; continue; }
+            created=1
         fi
         [[ -f $target/$entry ]] || { warn "$target/$entry not found; skipping it"; continue; }
         if [[ $src == lock ]]; then
-            install -Dm644 "$here/lock-clone/LockView.qml"   "$target/LockView.qml"
-            install -Dm644 "$here/lock-clone/LockKeypad.qml" "$target/LockKeypad.qml"
+            # Always rebuilt from Omarchy's current file plus our patch, so an
+            # update to the keypad reaches an existing clone and an Omarchy
+            # change to the lock view is noticed rather than clobbered.
+            stock_lock="${OMARCHY_PATH:-/usr/share/omarchy}/shell/plugins/lock/LockView.qml"
+            scratch=$(mktemp -d); cp "$stock_lock" "$scratch/LockView.qml"
+            if patch -d "$scratch" -p1 -s -N < "$here/lock-clone/LockView.patch" >/dev/null 2>&1; then
+                install -Dm644 "$scratch/LockView.qml"           "$target/LockView.qml"
+                install -Dm644 "$here/lock-clone/LockKeypad.qml" "$target/LockKeypad.qml"
+                note "$target"
+            elif grep -q 'gimbal: a keypad' "$target/LockView.qml"; then
+                warn "Omarchy's lock screen has changed since this keypad was written; keeping the
+             keypad you already have (see lock-clone/README.md)"
+            else
+                warn "Omarchy's lock screen has changed since this keypad was written; leaving it stock
+             (see lock-clone/README.md; the keypad needs updating for the new LockView.qml)"
+                (( created )) && omarchy plugin remove "$me.lock" --yes >/dev/null 2>&1
+            fi
+            rm -rf "$scratch"
         else
-            sed -i 's/WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive/WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand/' "$target/$entry"
+            patch_overlay "$target/$entry"
+            grep -q 'gimbalMode.tablet' "$target/$entry" && note "$target" \
+                || warn "$target/$entry has no keyboardFocus line to edit; Omarchy's overlay has changed"
         fi
-        note "$target"
     done
 else
     note "skipped; run this again and answer yes, or see lock-clone/README.md and menu-clone/README.md"

@@ -33,6 +33,7 @@ extension point, with these files as the proof of shape.
 | `manifest.json` | as `omarchy plugin clone` wrote it: id `msa.lock`, `clonedFrom: omarchy.lock` |
 | `Service.qml` | untouched |
 | `LockView.qml` | stock, plus the fold-state reader, the tap on the field, and the keypad |
+| `LockView.patch` | the same change as a patch against the stock file; `install.sh` applies it to Omarchy's current file and refuses, with a warning, if that has changed |
 | `LockKeypad.qml` | new: plain QWERTY, digits, a symbols page, one-shot shift |
 
 `git log -- lock-clone/` shows the stock files as their own commit, so the
@@ -71,10 +72,11 @@ keyboard to hand, before relying on it folded.
 
 ```bash
 omarchy plugin remove <you>.lock
+rm -rf ~/.config/omarchy/plugins/.<you>.lock.bak.*    # the hidden backup `plugin remove` keeps
 ```
 
 Removing an active clone switches back to the built-in (`shell/README.md`,
-"Cloning"). Nothing else was touched.
+"Cloning"). `uninstall.sh` does both.
 
 ## What it does not do yet
 

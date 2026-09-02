@@ -56,9 +56,28 @@ fi
 say "Removing the clones (lock screen, menu, prompts and pickers)"
 me=${USER:-$(id -un)}
 lock_clone="$HOME/.config/omarchy/plugins/$me.lock"
+# `omarchy plugin remove` keeps a hidden backup of a non-git plugin directory
+# (.<id>.bak.<timestamp>). For a clone we made, that is ours to delete too, or
+# every install/uninstall cycle leaves another copy behind.
+remove_clone() {
+    local id=$1
+    if omarchy plugin remove "$id" --yes >/dev/null 2>&1; then
+        rm -rf "$HOME/.config/omarchy/plugins/.$id.bak."*
+        note "removed $id"
+    else
+        note "could not remove $id; run: omarchy plugin remove $id"
+    fi
+}
+# Undo the edit patch_overlay in install.sh makes, for comparison with stock.
+unpatched() {
+    sed -e '/FileView { id: gimbalMode;/d' \
+        -e 's/gimbalMode.tablet ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive/WlrKeyboardFocus.Exclusive/' \
+        -e 's/WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand$/WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive/' \
+        -e '/^import Quickshell.Io$/d' "$1"
+}
 if [[ -d $lock_clone ]]; then
     if [[ -f $lock_clone/LockKeypad.qml ]]; then
-        omarchy plugin remove "$me.lock" --yes >/dev/null 2>&1 && note "removed $me.lock" || note "could not remove $me.lock; run: omarchy plugin remove $me.lock"
+        remove_clone "$me.lock"
     else
         note "$lock_clone is not ours; left alone"
     fi
@@ -67,8 +86,8 @@ for spec in menu:Menu.qml polkit:PolkitAgent.qml emojis:Emojis.qml clipboard:Cli
     src=${spec%%:*}; entry=${spec#*:}; clone="$HOME/.config/omarchy/plugins/$me.$src"
     [[ -d $clone ]] || continue
     stock="${OMARCHY_PATH:-/usr/share/omarchy}/shell/plugins/$src/$entry"
-    if [[ -f $stock ]] && diff -q <(sed 's/WlrKeyboardFocus.OnDemand/WlrKeyboardFocus.Exclusive/' "$clone/$entry") "$stock" >/dev/null 2>&1; then
-        omarchy plugin remove "$me.$src" --yes >/dev/null 2>&1 && note "removed $me.$src" || note "could not remove $me.$src; run: omarchy plugin remove $me.$src"
+    if [[ -f $stock ]] && diff -q <(unpatched "$clone/$entry") <(sed '/^import Quickshell.Io$/d' "$stock") >/dev/null 2>&1; then
+        remove_clone "$me.$src"
     else
         note "$clone has edits of its own; left alone"
     fi

@@ -29,6 +29,8 @@ CFLAGS     ?= -O2 -Wall -Wextra
 # Turning off the one warning that cannot ever be true here is what makes the
 # rest of them worth reading.
 CFLAGS     += -Wno-missing-field-initializers
+# Where `make install` puts the logo, so the binary looks there first whatever PREFIX was.
+CFLAGS     += -DGIMBAL_DATADIR=\"$(DATADIR)\"
 CFLAGS     += $(shell pkg-config --cflags $(PKGS))
 LDLIBS      = $(shell pkg-config --libs $(PKGS)) -lm
 
