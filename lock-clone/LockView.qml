@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -42,6 +44,43 @@ Item {
   signal passwordTextEdited(string password)
   signal clearFailureRequested()
   signal wakeRequested()
+
+  // ---- gimbal: a keypad while the machine is folded --------------------
+  //
+  // Under ext-session-lock only lock surfaces render or receive input, so the
+  // session keyboard cannot appear here by protocol. The fold state comes
+  // from the same runtime file Gimbal's knobs read; only the word `tablet`
+  // counts, so a missing file means laptop mode and nothing here changes.
+  // The keypad opens when the password field is tapped, and only then.
+  property bool folded: false
+  property bool keypadOpen: false
+  property string gimbalModePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/gimbal-mode"
+
+  onFoldedChanged: if (!folded) keypadOpen = false
+
+  function keypadType(ch) {
+    root.passwordTextEdited(root.passwordText + ch)
+  }
+  function keypadBackspace() {
+    root.wakeRequested()
+    root.passwordTextEdited(root.passwordText.slice(0, -1))
+  }
+  function keypadSubmit() {
+    root.wakeRequested()
+    var submitted = root.passwordText
+    root.passwordTextEdited("")
+    if (submitted.length > 0) root.submitPassword(submitted)
+  }
+
+  FileView {
+    path: root.gimbalModePath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.folded = text().trim() === "tablet"
+    onLoadFailed: root.folded = false
+  }
+  // ----------------------------------------------------------------------
 
   // Cache-busts the lock background by appending `?v=`. Adding a query
   // string keeps Image's loader happy while forcing it to reload when the
@@ -197,6 +236,21 @@ Item {
         elide: Text.ElideRight
       }
 
+      // gimbal: while folded, a tap on the field opens the keypad. Disabled
+      // in laptop mode, where a disabled MouseArea lets every event through
+      // to the TextInput exactly as before. Cursor placement in a masked
+      // field is nothing lost; focus is given back explicitly.
+      MouseArea {
+        anchors.fill: parent
+        enabled: root.folded
+        onPressed: function(mouse) {
+          root.keypadOpen = true
+          root.wakeRequested()
+          root.forcePasswordFocus()
+          mouse.accepted = true
+        }
+      }
+
       // Fingerprint hint pinned inside the field's right edge when a sensor is
       // enrolled, so the user knows they can touch to unlock instead of typing.
       // Matches hyprlock, which draws its fingerprint icon in the same spot.
@@ -214,6 +268,21 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
       }
+    }
+
+    // gimbal: the keypad. Below the field in both orientations -- on the
+    // 1200x750 panel the field ends at y 408 and this starts at 442 -- and
+    // never above it, so the dots stay in view while you type.
+    LockKeypad {
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(24)
+      width: Math.min(parent.width - Style.space(32), Style.space(900))
+      visible: root.folded && root.keypadOpen
+      onTyped: function(ch) { root.keypadType(ch) }
+      onBackspace: root.keypadBackspace()
+      onSubmit: root.keypadSubmit()
+      onDismiss: root.keypadOpen = false
     }
   }
 }
