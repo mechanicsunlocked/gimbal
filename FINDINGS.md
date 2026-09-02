@@ -2286,3 +2286,138 @@ Two smaller facts from the same run: the daemon dies with its parent
 (`PR_SET_PDEATHSIG`), so `omarchy-restart-shell` cannot leave a second one
 behind; and in laptop mode nothing is resident until `SUPER+B` asks, after
 which the process lives exactly as long as the keyboard is on screen.
+
+---
+
+## 17. Phase 3: appearing by itself, measured (2026-09-02)
+
+The brief's known risk was tested before any daemon code was written, with
+the spy from §3.1a (`tools/vkspy.c` in git history: owns the bus name, calls
+`ShowVirtualKeyboard`, logs every call fcitx5 makes on the client object and
+replies to it). Keys were injected with a 40-line `zwp_virtual_keyboard_v1`
+client that uploads the system keymap and sends one evdev code, exactly as
+`fw12-oskbd` does. `CurrentUI` is the method on
+`org.fcitx.Fcitx.Controller1`, as in §3.1j.
+
+### 17.1 The risk is real: one key from a virtual keyboard hides it
+
+    spy registered                          CurrentUI=virtualkeyboard
+    foot window focused                     <- NotifyIMActivated("keyboard-us"), ShowVirtualKeyboard
+    wtype a  (a second virtual keyboard)    <- HideVirtualKeyboard        CurrentUI=classicui
+    ShowVirtualKeyboard on /virtualkeyboard <- ShowVirtualKeyboard        CurrentUI=virtualkeyboard
+    wtype abc (three keys)                  <- HideVirtualKeyboard, once  CurrentUI=classicui
+
+Exactly as the source predicts (§15.4): the first non-`Virtual` key flips
+the input-method mode, the UI switches to `classicui`, and the addon's
+`suspend()` sends one Hide. Re-asserting with `ShowVirtualKeyboard` is a
+complete recovery. Three keys in a row cost one Hide, because after the
+first the addon is suspended and its key watcher is gone with it.
+
+### 17.2 `ProcessVisibilityEvent` is not needed
+
+The spy never sends it. Registered, 8 s of nothing: `CurrentUI` still
+`virtualkeyboard`, and the foot focus afterwards still produced a Show. The
+daemon does not send it. Whatever §3.1h saw, it was not this.
+
+### 17.3 The Omarchy menu is not a text field, as far as fcitx5 can tell
+
+With foot focused and the keyboard shown, summoning the menu produced:
+
+    <- NotifyIMDeactivated("keyboard-us")   (foot lost focus)
+    <- HideVirtualKeyboard
+    <- NotifyIMActivated("keyboard-us")     (the menu's input context)
+    ... and no ShowVirtualKeyboard
+
+The menu is a Qt window whose search is a key catcher (`Keys.onPressed` on
+an `Item`, `Menu.qml`), not a `TextInput`, so Qt never asks its input method
+to show. fcitx5-qt activates an input context for the window and that is
+all. Hiding the menu refocused foot and a Show came back. So the daemon
+treats `openlayer>>omarchy-menu` as a text field taking focus, on the same
+gate, and `closelayer>>omarchy-menu` as it losing focus.
+
+### 17.4 Releasing the name leaves fcitx5 with no user interface
+
+    spy stopped (HideVirtualKeyboard, then the name released)    CurrentUI=''
+    wtype z into foot                                             CurrentUI=''
+
+§3.2 saw the empty `CurrentUI` and blamed the release. The source says why
+and adds the worse half: `isUserInterfaceValid()` accepts `classicui` only
+in `PhysicalKeyboard` mode, the mode is still `OnScreenKeyboard`, and the
+one thing that flips it back — the key watcher — lives in the addon that
+was just suspended. So a later hardware key does not repair it either; only
+a restart of fcitx5 did, until now.
+
+The repair is to flip the mode *before* letting go, and a key with no
+symbol on it does that without typing anything:
+
+    spy registered, foot focused
+    vkraw 0    (KEY_RESERVED, xkb 8, NoSymbol)     <- HideVirtualKeyboard   CurrentUI=classicui
+    re-asserted                                                             CurrentUI=virtualkeyboard
+    vkraw 240  (KEY_UNKNOWN, xkb 248, NoSymbol)    <- HideVirtualKeyboard   CurrentUI=classicui
+    re-asserted, then vkraw 240, then the spy stopped                       CurrentUI=classicui
+
+foot, running `cat >/dev/null`, was still alive afterwards. `fw12-oskbd`
+sends evdev 240 on `SIGTERM`, waits 80 ms, and releases the name; it also
+ignores the Hide that key provokes. Measured at the end of every run below:
+`CurrentUI=classicui` after unfold. What nothing can repair is a `SIGKILL`;
+`systemctl --user restart omarchy-fcitx5.service` is the way back then.
+
+### 17.5 Which text fields ask for the keyboard
+
+| client | mechanism | Show arrives | keys arrive |
+|---|---|---|---|
+| foot | `zwp_text_input_v3` → waylandim | yes | yes (§3.1e) |
+| GTK4 entry (`tools/typetarget.c`, git history) | `zwp_text_input_v3` → waylandim | yes | yes: `hi` logged from evdev 35, 23 |
+| Omarchy menu | fcitx5-qt D-Bus frontend | no (§17.3) | yes, by the menu filtering (checkpoint) |
+| a Quickshell `TextInput` in a scratch window | fcitx5-qt D-Bus frontend | not measured: the field never took focus (`activeFocus=false`), only the window's context activated | — |
+| ghostty | — | not installed here (`extra/ghostty 1.3.1-2`); §3.1f saw it fire, KNOWN-ISSUES had it absent | — |
+
+The Qt and ghostty rows are on the hands-on checklist.
+
+### 17.6 The daemon, end to end
+
+Installed, folded through §16.2's simulation, rotation locked. `st` prints
+the state file, whether `fw12tab-osk` is mapped, `CurrentUI`, and who owns
+the bus name.
+
+| step | result |
+|---|---|
+| folded | procs=1 state=hidden mapped=0 CurrentUI=virtualkeyboard owner=fw12-oskbd |
+| a GTK4 entry took focus | state=visible mapped=1 |
+| a non-text window took focus (Quickshell, exclusive keyboard focus) | state=hidden after ~300 ms |
+| `SIGUSR1`, then the non-text window | state=visible — a user-summoned board stays |
+| `SIGUSR2` there | state=hidden |
+| menu summoned with the non-text window focused | state=visible, `fw12tab-osk` listed above `omarchy-menu` |
+| menu hidden, back to the non-text window | state=hidden after ~300 ms |
+| non-text window closed, entry focused | state=visible |
+| `autoShow: false` written to `gimbal.json` | plugin wrote `gimbal-autoshow=off`; the same focus churn left it hidden |
+| restored | `gimbal-autoshow=on` |
+| unfold | procs=0 state=hidden CurrentUI=classicui owner=(none) |
+
+### 17.7 The grace window, through the daemon's own keys
+
+A key from a second virtual keyboard is correctly not "ours" — in the run
+above such a key hid the board, and no Show came again until the next
+summon (§17.8). To measure the real path the daemon taps a key through its
+own press and release code 700 ms after each map when
+`FW12_OSKBD_SELFTEST_KEY=<evdev>` is set (never by the plugin):
+
+    entry focused, map, tap 'a' at +700 ms
+    +200 ms after the tap:   state=visible mapped=1 CurrentUI=virtualkeyboard entry='a'
+    +800 ms:                 unchanged
+    SIGUSR2, SIGUSR1, tap again at +700 ms:   state=visible  CurrentUI=virtualkeyboard  entry='aa'
+    then a non-text window:  state=visible (user-summoned stays)
+    SIGUSR2, entry refocused (auto), then the non-text window:   state=hidden
+
+So the Hide fcitx5 sends for our own key arrives inside the window, is
+ignored, and the re-assert has fcitx5 back in on-screen mode before the
+next thing happens. Auto-hide is intact afterwards.
+
+### 17.8 A hardware keyboard turns auto-show off until the next summon
+
+That is fcitx5's design, not a defect: a key it did not inject means the
+user has a keyboard, so it stops offering an on-screen one. While folded the
+built-in keyboard is off (§1.6), so the case is a Bluetooth keyboard — and
+then not popping the on-screen keyboard is right. The daemon re-asserts
+on every `SIGUSR1`, so one knob tap brings auto-show back, and a fold
+restarts the daemon, which registers afresh. There is no poll for it.
