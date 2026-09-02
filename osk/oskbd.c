@@ -457,42 +457,54 @@ static const char *CSS_FMT =
  * key you can read through is the point, a legend you cannot read is not.
  *
  * `reserve` is the layer-shell exclusive zone: on, tiled windows shrink to
- * sit above the board; off, the board floats over them, which is what a
- * translucent board is for.
+ * make room for the board; off, the board floats over them, which is what a
+ * translucent board is for. `pos` is where it sits: bottom, middle or top.
+ * A terminal keeps its prompt at the bottom, so a board that floats is best
+ * out of the way at the top; a middle board reserves nothing, since there is
+ * no edge to reserve from.
+ *
+ * The plugin writes the file by renaming a fresh one into place, so the
+ * monitor is not told to track moves and reacts to every event it gets:
+ * a rename-over then shows up as a plain create, and a spurious re-read
+ * costs nothing since the values are compared before anything is redone.
  * ------------------------------------------------------------------------ */
+typedef enum { POS_BOTTOM, POS_MIDDLE, POS_TOP } pos_t;
 static double   g_opacity = 0.5;
 static gboolean g_reserve = FALSE;
+static pos_t    g_pos = POS_BOTTOM;
 static GFileMonitor *look_monitor;
 static void apply_geometry(void);
 
 static void read_look(void) {
   char *path = g_strdup_printf("%s/gimbal-look", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
   char *text = NULL;
-  double opacity = 0.5; gboolean reserve = FALSE;
+  double opacity = 0.5; gboolean reserve = FALSE; pos_t pos = POS_BOTTOM;
   if (g_file_get_contents(path, &text, NULL, NULL)) {
     char **kv = g_strsplit_set(g_strstrip(text), " \n", -1);
     for (int i = 0; kv[i]; i++) {
       if (g_str_has_prefix(kv[i], "opacity=")) opacity = g_ascii_strtod(kv[i] + 8, NULL);
       else if (g_str_has_prefix(kv[i], "reserve=")) reserve = g_str_equal(kv[i] + 8, "1");
+      else if (g_str_has_prefix(kv[i], "pos=")) {
+        if (g_str_equal(kv[i] + 4, "top")) pos = POS_TOP;
+        else if (g_str_equal(kv[i] + 4, "middle")) pos = POS_MIDDLE;
+      }
     }
     g_strfreev(kv);
   }
   g_free(text); g_free(path);
   if (!(opacity >= 0.15 && opacity <= 1.0)) opacity = 0.5;   /* also catches NaN */
-  if (opacity == g_opacity && reserve == g_reserve) return;
-  g_opacity = opacity; g_reserve = reserve;
-  apply_geometry();   /* re-derives the CSS and the exclusive zone */
+  if (opacity == g_opacity && reserve == g_reserve && pos == g_pos) return;
+  g_opacity = opacity; g_reserve = reserve; g_pos = pos;
+  apply_geometry();   /* re-derives the CSS, the anchors and the exclusive zone, and queues a frame */
 }
 static void on_look_changed(GFileMonitor *m, GFile *f, GFile *o, GFileMonitorEvent e, gpointer u) {
-  (void)m; (void)f; (void)o; (void)u;
-  if (e == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || e == G_FILE_MONITOR_EVENT_CREATED
-      || e == G_FILE_MONITOR_EVENT_CHANGED || e == G_FILE_MONITOR_EVENT_DELETED || e == G_FILE_MONITOR_EVENT_MOVED_IN)
-    read_look();
+  (void)m; (void)f; (void)o; (void)e; (void)u;
+  read_look();
 }
 static void watch_look(void) {
   char *path = g_strdup_printf("%s/gimbal-look", g_getenv("XDG_RUNTIME_DIR") ?: "/tmp");
   GFile *f = g_file_new_for_path(path);
-  look_monitor = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+  look_monitor = g_file_monitor_file(f, G_FILE_MONITOR_NONE, NULL, NULL);
   if (look_monitor) g_signal_connect(look_monitor, "changed", G_CALLBACK(on_look_changed), NULL);
   g_object_unref(f); g_free(path);
   read_look();
@@ -739,10 +751,21 @@ static void apply_geometry(void) {
    * the strip below it belongs to the swipe surface rather than to the space
    * bar. Same reasoning as the side gutters: a gesture area over a key is a
    * key you cannot press. */
-  gtk_layer_set_margin(GTK_WINDOW(g_win), GTK_LAYER_SHELL_EDGE_BOTTOM, g_gutter);
+  /* Where it sits. Anchored to one edge, or to neither for the middle; the
+   * gutter margin belongs to the bottom edge, where the swipe strip was.
+   * Exclusive zone 0 still respects everyone else's zones, so a board at
+   * the top lands below the bar. */
+  gtk_layer_set_anchor(GTK_WINDOW(g_win), GTK_LAYER_SHELL_EDGE_TOP,    g_pos == POS_TOP);
+  gtk_layer_set_anchor(GTK_WINDOW(g_win), GTK_LAYER_SHELL_EDGE_BOTTOM, g_pos == POS_BOTTOM);
+  gtk_layer_set_margin(GTK_WINDOW(g_win), GTK_LAYER_SHELL_EDGE_BOTTOM, g_pos == POS_BOTTOM ? g_gutter : 0);
   /* Reserve the strip only when asked: a translucent board is meant to sit
-   * over the windows, not to shrink them. */
-  gtk_layer_set_exclusive_zone(GTK_WINDOW(g_win), g_reserve ? kbd_h + g_gutter : 0);
+   * over the windows, not to shrink them. A middle board has no edge to
+   * reserve from. */
+  int zone = 0;
+  if (g_reserve && g_pos == POS_BOTTOM) zone = kbd_h + g_gutter;
+  else if (g_reserve && g_pos == POS_TOP) zone = kbd_h;
+  gtk_layer_set_exclusive_zone(GTK_WINDOW(g_win), zone);
+  gtk_widget_queue_draw(g_win);   /* anchor and zone changes ride on the next commit */
 }
 
 static void on_monitor_changed(GObject *o, GParamSpec *p, gpointer u) {
@@ -1141,7 +1164,7 @@ static void on_activate(GtkApplication *app, gpointer u) {
   gtk_layer_set_layer(GTK_WINDOW(win), GTK_LAYER_SHELL_LAYER_OVERLAY);
   gtk_layer_set_keyboard_mode(GTK_WINDOW(win), GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
   gtk_layer_set_namespace(GTK_WINDOW(win), "fw12tab-osk");
-  gtk_layer_set_anchor(GTK_WINDOW(win), GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
+  /* Anchors are set in apply_geometry(), from the look. */
 
   /* GtkFixed, not GtkGrid.
    *

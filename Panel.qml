@@ -330,7 +330,13 @@ Item {
         return isNaN(v) ? 0.5 : Math.max(0.15, Math.min(1, v));
     }
     readonly property bool keyboardReservesSpace: root.opt("keyboardReservesSpace", false) === true
-    readonly property string lookWord: "opacity=" + root.keyboardOpacity.toFixed(2) + " reserve=" + (root.keyboardReservesSpace ? "1" : "0")
+    // bottom, middle or top. A terminal keeps its prompt at the bottom, and a
+    // board that floats is best out of its way.
+    readonly property string keyboardPosition: {
+        var p = String(root.opt("keyboardPosition", "bottom"));
+        return (p === "top" || p === "middle") ? p : "bottom";
+    }
+    readonly property string lookWord: "opacity=" + root.keyboardOpacity.toFixed(2) + " reserve=" + (root.keyboardReservesSpace ? "1" : "0") + " pos=" + root.keyboardPosition
 
     onLookWordChanged: lookFile.setText(root.lookWord)
 

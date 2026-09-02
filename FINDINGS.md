@@ -2810,3 +2810,30 @@ back `review-required`, as predicted: `privilege` for the `sudo` mentions
 for the printed `pacman` line, `service-management` for the boot-fix unit
 and the `systemctl --user show-environment` read. No finding. A maintainer
 decides from here.
+
+### 21.4 "The slider does nothing": the daemon missed how Quickshell writes
+
+Traced link by link with a board up. Writing `keyboardOpacity` into
+`gimbal.json` produced the new word in `gimbal-look` within a second — the
+plugin side worked, and the slider had been writing all along (the file held
+`0.15`). The daemon did not react. Writing the same word into the file in
+place, it did. Quickshell's `FileView.setText` renames a fresh file into
+place (the inode changed, 6422 → 6423), and the daemon's `GFileMonitor`,
+opened with `WATCH_MOVES` and filtering on a handful of events, saw nothing
+it acted on. It watches with no flags now and re-reads on any event; the
+values are compared before anything is redone, so spurious events cost
+nothing.
+
+With that, and a third word for placement, measured live with the board up:
+
+    opacity 0.5 -> 1.0        key-face pixel 26 -> 44
+    reserve on                reserved bottom 338 (the board's height)
+    pos=top                   board at y 26, under the bar; reserved top 364
+    pos=middle                board at y 219, centred in the free area; nothing reserved
+    back to defaults          y 412, reserved bar only, pixel 26
+
+`keyboardPosition` is `bottom`, `middle` or `top`. A terminal keeps its
+prompt at the bottom, so a translucent board that floats is best out of its
+way at the top; a middle board reserves nothing because there is no edge to
+reserve from. The slider value was reset from the blind `0.15` to the
+default `0.5` when this was fixed.

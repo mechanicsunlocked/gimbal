@@ -65,6 +65,7 @@ the part most likely to feel wrong.
       unlocked knob used to be deaf until the shell restarted.)
 - [ ] In the settings, drag "Solid": the keyboard changes under your thumb.
       Turn "Push windows up" on: windows shrink above it; off: it floats.
+      Tap Top, Middle, Bottom: the board moves at once.
 - [ ] Drag it to each of the four screen edges and press-and-hold to lock there.
       Check it sits sensibly at each, in both orientations.
 - [ ] While a knob is unlocked, confirm the rest of the screen still works

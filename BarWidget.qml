@@ -110,7 +110,8 @@ Panel {
             "blockOnMoonlight": true,
             "autoShow": true,
             "keyboardOpacity": 0.5,
-            "keyboardReservesSpace": false
+            "keyboardReservesSpace": false,
+            "keyboardPosition": "bottom"
         })
 
     readonly property var gestures: [
@@ -560,6 +561,70 @@ Panel {
                     value: Number(root.value("keyboardOpacity"))
                     onMoved: function (v) {
                         root.setValue("keyboardOpacity", Math.round(v * 20) / 20);
+                    }
+                }
+
+                // Where the board sits. Three boxes, one lit, like the knobs:
+                // a choice you make once, readable at arm's length.
+                Text {
+                    text: "Position"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Style.space(6)
+
+                    Repeater {
+                        model: [
+                            {
+                                key: "top",
+                                label: "Top"
+                            },
+                            {
+                                key: "middle",
+                                label: "Middle"
+                            },
+                            {
+                                key: "bottom",
+                                label: "Bottom"
+                            }
+                        ]
+
+                        Rectangle {
+                            id: posBox
+
+                            required property var modelData
+                            readonly property bool on: String(root.value("keyboardPosition")) === posBox.modelData.key
+
+                            width: (parent.width - Style.space(12)) / 3
+                            height: Style.space(30)
+                            radius: Style.cornerRadius
+                            color: posBox.on ? root.sage : Util.alpha(root.foreground, 0.12)
+                            opacity: posTap.pressed ? 0.75 : 1.0
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: 120
+                                }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: posBox.modelData.label
+                                color: posBox.on ? "#1B1B1B" : root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
+
+                            TapHandler {
+                                id: posTap
+
+                                onTapped: root.setValue("keyboardPosition", posBox.modelData.key)
+                            }
+                        }
                     }
                 }
 

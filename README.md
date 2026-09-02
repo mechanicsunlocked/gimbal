@@ -72,7 +72,9 @@ A keyboard you called yourself stays until you put it away. One that came up
 by itself goes away by itself.
 
 It is half-transparent and sits over your windows rather than pushing them
-up, so it costs less of the screen; both are settings.
+up, so it costs less of the screen, and it can sit at the bottom, the middle
+or the top — the top keeps a terminal's prompt in view. All three are
+settings.
 
 It is laid out like the Laptop 12's own keyboard, so your hands already know
 it: function row under `fn`, real `ctrl` / `alt` / `alt gr`, the Framework
@@ -115,7 +117,7 @@ indicator that opens the settings.
 | Setting | What it does |
 |---|---|
 | **Interaction** | each knob on or off |
-| **Keyboard** | whether it appears by itself; how solid it is; whether it pushes windows up or covers them |
+| **Keyboard** | whether it appears by itself; how solid it is; top, middle or bottom; whether it pushes windows up or covers them |
 | **Gestures** | the command each knob drag runs |
 | **Gaming** | hold the keyboard and the menu back while a Moonlight stream is on screen |
 
@@ -205,6 +207,7 @@ also go in this plugin's entry in `~/.config/omarchy/shell.json`; values in
   "swipeThreshold": 30,
   "autoShow": true,
   "keyboardOpacity": 0.5,
+  "keyboardPosition": "bottom",
   "keyboardReservesSpace": false,
   "blockOnMoonlight": true
 }
